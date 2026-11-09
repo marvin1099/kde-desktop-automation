@@ -76,7 +76,11 @@ Input points must name their space:
   area. This is the preferred AI-facing form.
 - `display`: normalized point relative to a named display.
 - `desktop`: logical desktop pixels.
-- `screen-percent`: legacy absolute percentages for backends such as `dotool`.
+- `virtual-desktop`: normalized point across the bounding canvas of all enabled
+  displays. This is a backend coordinate space, not the preferred AI-facing
+  space.
+- `screen-percent`: deprecated compatibility alias for `virtual-desktop`; never
+  interpret it as percentages local to one display.
 
 The caller should not have to convert a window point to a global screen point.
 The input adapter uses fresh window/display geometry to do that conversion and
@@ -84,6 +88,58 @@ reports the resolved point. If the window moved between observation and action,
 re-resolve the target and recompute. If the backend cannot perform this safely,
 return an explicit unsupported/error result rather than click an approximate
 location.
+
+### `dotool` pointer mapping and state
+
+The public interface should use logical desktop coordinates from display
+discovery, not physical-pixel screenshot coordinates. In particular, `dotool`
+`mouseto` is absolute over the **virtual canvas spanning all displays**: its
+`x` and `y` are normalized from 0 to 1 across the full desktop bounds, not
+relative to the selected monitor. Use the logical `x`, `y`, `width`, and
+`height` reported by `wlpdisplays` to compute the bounding rectangle of enabled
+outputs. Convert a logical point `(x, y)` to dotool coordinates as:
+
+```text
+u = (x - virtual_left) / virtual_width
+v = (y - virtual_top) / virtual_height
+```
+
+For a display-relative or window-relative point, first resolve it to logical
+desktop coordinates, then apply this conversion. Refresh display geometry after
+monitor changes. If the resulting point is in a gap between outputs or outside
+the target's current bounds, fail or ask for a new observation; do not silently
+send it to a nearby display. Account for negative display origins, scaling, and
+rotations using the logical geometry returned by the display adapter.
+
+Do not treat `mouseto` like an idempotent “set cursor here” operation. dotool's
+absolute tablet-style device remembers its **last commanded absolute position**
+separately from the desktop cursor. If a user moves the real mouse while the
+tablet remains at `(0.5, 0.5)`, sending `mouseto 0.5 0.5` again may emit no
+movement, leaving the real pointer where the user moved it. Therefore:
+
+1. Query the actual pointer position when possible. If it is already at the
+   requested point, do not move it before clicking.
+2. Track the tablet's last commanded normalized position separately from the
+   actual pointer position; do not infer one from the other. Serialize access
+   to this state and invalidate/reconcile it after backend restarts or external
+   dotool use.
+3. If the requested absolute point is the same as the tablet's last command but
+   the real cursor is elsewhere, force a distinct tablet event (for example, a
+   one-logical-pixel safe nudge followed by the requested point) and verify the
+   resulting cursor location. Never click during the intermediate nudge. If no
+   safe distinct point exists or the pointer cannot be verified, return an
+   explicit failure instead of clicking at a possibly wrong location.
+4. Use relative `mousemove` only as a controlled fallback. It can be clipped or
+   caught at a screen corner, so check the actual final pointer position and
+   report any shortfall; do not assume the requested delta was fully applied.
+
+The input result should include the requested target point, resolved logical
+desktop point, normalized virtual-canvas point sent to dotool, actual pointer
+position before and after, last absolute tablet command (if known), whether a
+nudge or relative fallback was used, and whether the final position was
+verified. If actual pointer position or tablet state cannot be queried or
+reconciled, surface that limitation through `capabilities` and avoid claiming
+precise target-directed input.
 
 ## CLI shape
 
@@ -189,6 +245,7 @@ example:
     "input_backend": "dotool",
     "routing": "global-seat",
     "seat": "seat0",
+    "device_state": {"last_mouseto": {"x": 0.5, "y": 0.5}},
     "modal_window_ref": null
   }
 }
@@ -243,7 +300,7 @@ public model:
 | `kdotool` and its KWin script mode | Window enumeration/properties, focus, desktop/window operations, and other KWin-specific queries/actions |
 | `wlpdisplays` | Display discovery and monitor information |
 | `kdocktor` | Display configuration/settings changes, where supported |
-| `dotool` | Pointer and keyboard input; adapt public target-relative points to its absolute percentage coordinates |
+| `dotool` | Pointer and keyboard input; map logical desktop points to its normalized whole-desktop `mouseto` canvas and track tablet position separately from the real cursor |
 | Spectacle | Screen/display/window capture when the installed version supports the requested target |
 
 The exact command options and available actions should be detected and verified
