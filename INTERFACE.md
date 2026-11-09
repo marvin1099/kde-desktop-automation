@@ -602,3 +602,21 @@ session. `capabilities` should list typed operations and limitations, while
 privacy-sensitive or high-impact operations (clipboard reads, audio capture,
 locking/logging out, display-mode changes) should be opt-in and clearly
 identified in plans and results.
+
+### Optional integration notes
+
+These are future, capability-conditional adapters—not part of the current
+prototype or required for the core desktop interface:
+
+- **PipeWire:** explore typed audio-device/routing operations and, where the
+  installed portals and policy support it, audio or camera/video capture.
+  Microphone and camera use must be explicit, visibly reported, and subject to
+  the platform's permission flow; never infer that capture is available merely
+  because PipeWire is installed.
+- **`playerctl`:** optionally inspect supported players and expose current
+  metadata plus transport controls (play/pause, next, previous, seek). If more
+  than one player is available, require or return an explicit player target.
+- **Plasma settings:** add narrowly scoped, typed settings operations only where
+  a supported API exists. Report the effective value, provide dry-run and
+  restoration where practical, and do not expose arbitrary shell or raw config
+  file editing as a settings API.
