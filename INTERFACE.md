@@ -32,6 +32,78 @@ operation is supported when the active session or installed tools cannot do it.
 8. **Verify transitions.** Desktop actions are not transactions; report partial
    completion and verify important postconditions instead of assuming success.
 
+## Session model and isolation
+
+The interface should treat the **compositor session** as the outermost scope.
+A Wayland display socket (for example, `WAYLAND_DISPLAY=wayland-99`) selects a
+compositor connection; it does not create a monitor. Outputs are owned and
+created by the compositor/backend. There is no portable Wayland command that
+means “add output 99”; virtual-output creation is compositor- and version-
+specific.
+
+Keep these modes distinct:
+
+| Mode | What it means | Isolation |
+| --- | --- | --- |
+| `user-desktop` | The user's normal KWin/Plasma session and physical outputs | Shared with the user; input, focus, clipboard, and windows can be affected |
+| `shared-virtual-output` | An extra/headless output attached to that same KWin session | Visually separate, but may still share KWin focus and the input seat; not sufficient to promise the user can keep playing undisturbed |
+| `agent-session` | A separate KWin/Wayland session with its own hidden output, window tree, input route, and capture | Preferred default; use a restricted OS identity/sandbox and explicit file access if actual security isolation is required |
+| `exclusive-remote` | A remote session that takes over/locks the host display while connected | Useful for privacy, but displaces the local user's display session instead of running alongside them |
+
+The intended default is exactly a private display that the agent can explore
+while the user continues using the physical desktop—for example, moving their
+mouse and playing a game without the agent stealing focus or sending input to
+the game. To guarantee that, the agent display needs its own compositor/session
+and input route (or a verified KWin per-seat mechanism). An extra output in the
+user's existing KWin session is not enough by itself: it may still share global
+keyboard focus, session services, clipboard, and input devices. The agent input
+adapter must be bound to the agent session, not the host's physical-session
+`dotool` device.
+
+The agent should use `agent-session` by default and must never fall back to
+`user-desktop` just because its private session is unavailable. Every window,
+display, desktop, screenshot, and input reference belongs to a `session_ref`;
+commands either name the session or use the configured isolated default. An
+observation should report the isolation properties (separate compositor,
+physical-screen visibility, input route, OS identity, and filesystem scope),
+not just a vague `isolated: true` flag.
+
+An explicit user-desktop mode is still valuable. It should require an explicit
+attach/authorization step, use the compositor's supported remote-control or
+input-emulation mechanism, show that the live user session is being controlled,
+and return to the isolated session on detach. Permissions should be scoped and
+revocable. A hidden output alone is not enough to claim isolation: applications
+may still share focus, clipboard, session services, and input with the user's
+desktop.
+
+### Candidate KDE implementations
+
+Upstream Plasma 6.8 documents KRDP **Exclusive mode**, which can lock the
+server's screen and provide a virtual screen matching the remote client's
+window. The KDE developer's description also says the physical host screens are
+removed for the remote session and the user's windows are restored to their
+prior positions after logging back in. This is a strong candidate for a
+private/remote mode, but should be treated as exclusive access, not assumed to
+be a concurrently running second desktop. A local RDP client could be explored
+as the transport, subject to testing authentication, capture, input routing,
+and whether local use is actually displaced.
+
+Plasma 6.8's screen-sharing portal can also create a configurable virtual
+screen. That is useful for capture/streaming, but by itself does not create a
+separate user session. KWin's nested/virtual backend is another candidate for a
+headless agent compositor; test it with its own Wayland socket and D-Bus session
+before relying on it for a full Plasma desktop. Plasma's per-screen virtual
+desktops organize windows but are not a security boundary either.
+
+The first implementation experiment should prove separation, not just that a
+virtual monitor appears: launch a test app in the agent session, move/click its
+pointer, capture its screen, and verify that the user's physical pointer,
+keyboard focus, game/window input, windows, and displays remain unchanged. Only
+then make this the default backend. When the user explicitly asks the agent to
+operate their real desktop, attach to `user-desktop` as a separate, visible,
+authorized mode; return to the private session afterward. Never “borrow” the
+user's mouse to control the private display.
+
 ## Public concepts
 
 ### Targets
@@ -41,7 +113,7 @@ kinds:
 
 | Kind | Examples | Typical operations |
 | --- | --- | --- |
-| `session` | current KDE session | inspect, active window, pointer position |
+| `session` | isolated agent session or explicitly attached user session | inspect, capabilities, active window, pointer position |
 | `window` | active window, a window reference, a selector | inspect, focus, move, resize, minimize, close, input, screenshot |
 | `desktop` | current or a virtual desktop | inspect, switch to, list its windows |
 | `display` | connector/name or a display reference | inspect, screenshot, configure where supported |
@@ -146,6 +218,20 @@ precise target-directed input.
 Use a single command with noun/verb subcommands, human-readable output by
 default, and a versioned JSON mode for agents. The command name below is
 illustrative (`kde-ai`; choose a final name separately).
+
+Every command should accept an optional global `--session SESSION`. If omitted,
+it uses the configured private `agent-session`; it must never silently fall
+back to `user-desktop`. Session management could look like:
+
+```text
+kde-ai session list
+kde-ai session create --kind agent --display 1920x1080
+kde-ai --session agent-default observe --format json
+kde-ai session attach --target user-desktop
+```
+
+Attaching to `user-desktop` should trigger the required authorization and make
+the shared-session scope visible in subsequent results.
 
 ```text
 kde-ai observe [--target session|window:REF|desktop:REF|display:REF] [--format json]
