@@ -204,7 +204,61 @@ def process_matches(identity: ProcessIdentity) -> bool:
             return False
     elif not identity.command or actual_command[0] != identity.command[0]:
         return False
-    return any(identity.marker in part for part in actual_command)
+    if any(identity.marker in part for part in actual_command):
+        return True
+    try:
+        process_environment = Path(f"/proc/{identity.pid}/environ").read_bytes().split(b"\0")
+    except OSError:
+        return False
+    return f"KDE_AI_PROCESS_MARKER={identity.marker}".encode() in process_environment
+
+
+def processes_with_environment_marker(marker: str) -> list[ProcessIdentity]:
+    """Find same-user processes that inherited one launch's unique marker."""
+    if not marker or "\0" in marker:
+        return []
+    marker_value = f"KDE_AI_PROCESS_MARKER={marker}".encode()
+    matches: list[ProcessIdentity] = []
+    try:
+        entries = tuple(Path("/proc").iterdir())
+    except OSError:
+        return []
+    for entry in entries:
+        if not entry.name.isdecimal():
+            continue
+        pid = int(entry.name)
+        try:
+            if entry.stat().st_uid != os.getuid():
+                continue
+        except OSError:
+            continue
+        start_ticks = process_start_ticks(pid)
+        if start_ticks is None:
+            continue
+        try:
+            environment = (entry / "environ").read_bytes().split(b"\0")
+            if marker_value not in environment:
+                continue
+            executable = os.readlink(entry / "exe")
+            command = tuple(
+                part
+                for part in (entry / "cmdline").read_bytes().decode(errors="replace").split("\0")
+                if part
+            )
+        except OSError:
+            continue
+        if not command or process_start_ticks(pid) != start_ticks:
+            continue
+        identity = ProcessIdentity(
+            pid=pid,
+            start_ticks=start_ticks,
+            executable=executable,
+            marker=marker,
+            command=command,
+        )
+        if process_matches(identity):
+            matches.append(identity)
+    return matches
 
 
 def terminate_verified(identity: ProcessIdentity, *, timeout: float = 3.0) -> bool:

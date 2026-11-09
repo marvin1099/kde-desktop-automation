@@ -7,6 +7,7 @@ import shutil
 import stat
 import subprocess
 import time
+import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,6 +15,7 @@ from typing import Any
 from urllib.parse import quote
 
 from kde_interaction.backends.displays import DisplayInfo, list_displays
+from kde_interaction.backends.kwin_input import InputReceipt, KWinFakeInput, fake_input_version
 from kde_interaction.backends.screenshots import capture_fullscreen
 from kde_interaction.errors import InteractionError
 from kde_interaction.models import ProcessIdentity, SessionRecord
@@ -23,6 +25,7 @@ from kde_interaction.process import (
     process_identity,
     process_matches,
     process_start_ticks,
+    processes_with_environment_marker,
     require_executable,
     terminate_verified,
 )
@@ -31,6 +34,7 @@ _PASSTHROUGH_PREFIXES = ("LC_", "MESA_", "VK_", "LIBVA_")
 _MOUNT_ESCAPE = re.compile(r"\\([0-7]{3})")
 _RUNTIME_CLEANUP_RETRIES = 20
 _RUNTIME_CLEANUP_RETRY_SECONDS = 0.05
+_APPLICATION_CLEANUP_RETRIES = 6
 _PASSTHROUGH_NAMES = {
     "LANG",
     "PATH",
@@ -118,6 +122,7 @@ class KWinVirtualBackend:
             wayland_display=wayland_display,
             dbus_address=dbus_address,
         )
+        base_env["KDE_AI_PROCESS_MARKER"] = session_id
 
         log_fd = _open_private_log(session_paths.log_file)
         dbus_process: subprocess.Popen[str] | None = None
@@ -196,6 +201,11 @@ class KWinVirtualBackend:
                 height=height,
             )
 
+            try:
+                input_version = fake_input_version(session_paths.runtime_dir / wayland_display)
+            except InteractionError:
+                input_version = None
+
             record = SessionRecord(
                 session_id=session_id,
                 name=name,
@@ -210,6 +220,7 @@ class KWinVirtualBackend:
                 dbus_address=dbus_address,
                 kwin_process=kwin_identity,
                 dbus_process=dbus_identity,
+                fake_input_version=input_version,
             )
             self._children[kwin_process.pid] = kwin_process
             self._children[dbus_process.pid] = dbus_process
@@ -217,6 +228,7 @@ class KWinVirtualBackend:
         except Exception:
             _stop_child(kwin_process)
             _stop_child(dbus_process)
+            self._stop_marker_processes(session_id, root=None, session_id=session_id)
             _remove_owned_runtime(session_paths.runtime_dir, self.paths.runtime_root / "sessions")
             raise
         finally:
@@ -229,6 +241,10 @@ class KWinVirtualBackend:
     def stop(self, session: SessionRecord) -> list[str]:
         self._validate_session_identity(session)
         warnings: list[str] = []
+        for process in session.application_processes:
+            self._stop_application_processes(process, session_id=session.session_id)
+            self._reap_child(process.pid, f"application {process.executable}")
+
         for process, label in (
             (session.kwin_process, "KWin"),
             (session.dbus_process, "private D-Bus"),
@@ -242,6 +258,10 @@ class KWinVirtualBackend:
                 )
             self._reap_child(process.pid, label)
 
+        # KWin and the private bus can activate helper processes (portals,
+        # Xwayland) which inherit the session marker but are not direct children.
+        self._stop_marker_processes(session.session_id, root=None, session_id=session.session_id)
+
         session_paths = self.paths.for_session(session.session_id)
         runtime_sessions = self.paths.runtime_root / "sessions"
         if not _remove_owned_runtime(session_paths.runtime_dir, runtime_sessions):
@@ -249,6 +269,181 @@ class KWinVirtualBackend:
                 f"Private runtime directory needs manual cleanup: {session_paths.runtime_dir}"
             )
         return warnings
+
+    def launch_application(self, session: SessionRecord, argv: tuple[str, ...]) -> ProcessIdentity:
+        self._require_running(session)
+        if not argv or not argv[0] or any("\0" in item for item in argv):
+            raise InteractionError(
+                "invalid_application_command",
+                "Provide an executable and arguments as separate command-line values.",
+            )
+        if len(argv) > 128 or sum(len(item.encode("utf-8")) for item in argv) > 32_768:
+            raise InteractionError(
+                "application_command_too_large",
+                "Application commands are limited to 128 arguments and 32 KiB total.",
+            )
+        executable = shutil.which(argv[0])
+        if executable is None:
+            raise InteractionError(
+                "application_not_found",
+                f"Could not find application executable '{argv[0]}'.",
+                details={"executable": argv[0]},
+            )
+        executable = str(Path(executable).resolve())
+        command = (executable, *argv[1:])
+        marker = f"{session.session_id}-app-{uuid.uuid4().hex}"
+        environment = self.environment(session)
+        environment["KDE_AI_PROCESS_MARKER"] = marker
+        log_fd = _open_private_log(self.paths.for_session(session.session_id).log_file)
+        try:
+            try:
+                child = subprocess.Popen(
+                    command,
+                    env=environment,
+                    cwd=session.home_dir,
+                    stdin=subprocess.DEVNULL,
+                    stdout=log_fd,
+                    stderr=log_fd,
+                    close_fds=True,
+                    start_new_session=True,
+                )
+            except OSError as exc:
+                raise InteractionError(
+                    "application_launch_failed",
+                    f"Could not launch application '{argv[0]}'.",
+                    details={"executable": executable, "reason": str(exc)},
+                ) from exc
+        finally:
+            os.close(log_fd)
+
+        try:
+            actual_executable = os.readlink(f"/proc/{child.pid}/exe")
+            identity = process_identity(
+                child.pid,
+                executable=actual_executable,
+                marker=marker,
+                command=command,
+            )
+            if not process_matches(identity):
+                raise InteractionError(
+                    "application_identity_failed",
+                    "The launched process did not retain its private-session identity marker.",
+                    details={"pid": child.pid, "executable": executable},
+                )
+        except (OSError, InteractionError) as exc:
+            _stop_child(child)
+            self._stop_marker_processes(marker, root=None)
+            if isinstance(exc, InteractionError):
+                raise
+            raise InteractionError(
+                "application_identity_failed",
+                "Could not safely identify the launched application process.",
+                details={"pid": child.pid, "executable": executable, "reason": str(exc)},
+            ) from exc
+        self._children[child.pid] = child
+        return identity
+
+    def stop_application(self, identity: ProcessIdentity) -> None:
+        self._stop_application_processes(identity)
+        self._reap_child(identity.pid, f"application {identity.executable}")
+
+    def send_key(self, session: SessionRecord, chord: str) -> InputReceipt:
+        return self._send_input(session, "key", chord)
+
+    def send_text(self, session: SessionRecord, text: str) -> InputReceipt:
+        return self._send_input(session, "text", text)
+
+    def click(self, session: SessionRecord, x: int, y: int, button: str) -> InputReceipt:
+        if not (0 <= x < session.width and 0 <= y < session.height):
+            raise InteractionError(
+                "coordinates_out_of_bounds",
+                "Click coordinates must be inside the private output.",
+                details={"x": x, "y": y, "width": session.width, "height": session.height},
+            )
+        self._require_running(session)
+        socket_path = Path(session.runtime_dir) / session.wayland_display
+        with KWinFakeInput(
+            socket_path,
+            application_name="kde-ai",
+            reason=f"Session-scoped click in private session {session.session_id}.",
+        ) as client:
+            return client.click(x, y, button)
+
+    def _send_input(self, session: SessionRecord, kind: str, value: str) -> InputReceipt:
+        self._require_running(session)
+        socket_path = Path(session.runtime_dir) / session.wayland_display
+        with KWinFakeInput(
+            socket_path,
+            application_name="kde-ai",
+            reason=f"Session-scoped {kind} input in private session {session.session_id}.",
+        ) as client:
+            if kind == "key":
+                return client.send_key(value)
+            return client.send_text(value)
+
+    def _stop_application_processes(
+        self,
+        identity: ProcessIdentity,
+        *,
+        session_id: str | None = None,
+    ) -> None:
+        self._stop_marker_processes(identity.marker, root=identity, session_id=session_id)
+
+    def _stop_marker_processes(
+        self,
+        marker: str,
+        *,
+        root: ProcessIdentity | None,
+        session_id: str | None = None,
+    ) -> None:
+        empty_scans = 0
+        for _attempt in range(_APPLICATION_CLEANUP_RETRIES):
+            processes = processes_with_environment_marker(marker)
+            if (
+                root is not None
+                and process_matches(root)
+                and all(item.pid != root.pid for item in processes)
+            ):
+                processes.append(root)
+            if not processes:
+                empty_scans += 1
+                if empty_scans >= 2:
+                    return
+                time.sleep(0.05)
+                continue
+            empty_scans = 0
+            identity_changed = False
+            for process in sorted(processes, key=lambda item: item.pid, reverse=True):
+                current_start = process_start_ticks(process.pid)
+                if current_start != process.start_ticks:
+                    continue
+                try:
+                    stopped = terminate_verified(process, timeout=1.0)
+                except InteractionError as exc:
+                    if exc.code == "process_identity_mismatch":
+                        # A marked process can exec between /proc inspection and
+                        # pidfd verification. Re-scan and verify its new image.
+                        identity_changed = True
+                        break
+                    raise
+                if not stopped:
+                    raise InteractionError(
+                        "application_stop_incomplete",
+                        "Could not confirm that a launched private-session application stopped.",
+                        details={"session_id": session_id, "pid": process.pid},
+                    )
+            if identity_changed:
+                continue
+        remaining = processes_with_environment_marker(marker)
+        if remaining:
+            raise InteractionError(
+                "application_stop_incomplete",
+                "Marked application processes remained after cleanup attempts.",
+                details={
+                    "session_id": session_id,
+                    "pids": [process.pid for process in remaining],
+                },
+            )
 
     def displays(self, session: SessionRecord) -> list[DisplayInfo]:
         self._require_running(session)
@@ -283,6 +478,7 @@ class KWinVirtualBackend:
         expected_wayland = f"kde-ai-{session.session_id.removeprefix('agent-')}"
         expected_bus_path = session_paths.runtime_dir / "bus"
         expected_bus_address = f"unix:path={quote(str(expected_bus_path), safe='/')}"
+        application_markers = [process.marker for process in session.application_processes]
         valid = (
             session.backend == self.name
             and session.runtime_dir == str(session_paths.runtime_dir)
@@ -292,6 +488,14 @@ class KWinVirtualBackend:
             and session.dbus_process.marker == str(expected_bus_path)
             and session.kwin_process.pid != session.dbus_process.pid
             and _is_private_bus_address(session.dbus_address, expected_bus_address)
+            and len(application_markers) == len(set(application_markers))
+            and all(
+                marker.startswith(f"{session.session_id}-app-") for marker in application_markers
+            )
+            and all(
+                process.pid not in {session.kwin_process.pid, session.dbus_process.pid}
+                for process in session.application_processes
+            )
         )
         if not valid:
             raise InteractionError(

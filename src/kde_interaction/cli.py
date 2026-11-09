@@ -91,12 +91,61 @@ def screenshot_session(
     )
 
 
+@session_app.command("launch")
+def launch_application(
+    session_id: str = typer.Argument(..., help="Managed private session ID."),
+    command: list[str] = typer.Argument(
+        ...,
+        metavar="COMMAND [ARGS]...",
+        help="Executable and arguments, passed directly without a shell.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Launch an application with the selected private session's Wayland and D-Bus."""
+    _run(
+        lambda: (_manager().launch_application(session_id, tuple(command)), []),
+        json_output=json_output,
+    )
+
+
+@session_app.command("key")
+def send_key(
+    session_id: str = typer.Argument(..., help="Managed private session ID."),
+    chord: str = typer.Argument(..., help="Key or chord, for example CTRL+S or ENTER."),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Submit one key or chord to the private session's current keyboard focus."""
+    _run(lambda: (_manager().send_key(session_id, chord), []), json_output=json_output)
+
+
+@session_app.command("type")
+def type_text(
+    session_id: str = typer.Argument(..., help="Managed private session ID."),
+    text: str = typer.Argument(..., help="Text to submit to the current keyboard focus."),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Submit literal text to the private session's current keyboard focus."""
+    _run(lambda: (_manager().send_text(session_id, text), []), json_output=json_output)
+
+
+@session_app.command("click")
+def click_session(
+    session_id: str = typer.Argument(..., help="Managed private session ID."),
+    x: int = typer.Argument(..., help="Horizontal logical output pixel."),
+    y: int = typer.Argument(..., help="Vertical logical output pixel."),
+    button: str = typer.Option("left", "--button", help="Mouse button: left, middle, or right."),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Submit a click at an explicit point inside the private output."""
+    _run(lambda: (_manager().click(session_id, x, y, button), []), json_output=json_output)
+
+
 @session_app.command("stop")
 def stop_session(
     session_id: str = typer.Argument(..., help="Managed session ID."),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
-    """Stop only the recorded private KWin and D-Bus processes."""
+    """Stop launched applications and the recorded private KWin/D-Bus processes."""
     _run(lambda: _manager().stop(session_id), json_output=json_output)
 
 

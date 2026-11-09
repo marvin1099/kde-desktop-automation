@@ -49,6 +49,8 @@ class SessionRecord:
     dbus_address: str
     kwin_process: ProcessIdentity
     dbus_process: ProcessIdentity
+    application_processes: tuple[ProcessIdentity, ...] = ()
+    fake_input_version: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -65,6 +67,8 @@ class SessionRecord:
             "dbus_address": self.dbus_address,
             "kwin_process": self.kwin_process.to_dict(),
             "dbus_process": self.dbus_process.to_dict(),
+            "application_processes": [process.to_dict() for process in self.application_processes],
+            "fake_input_version": self.fake_input_version,
         }
 
     @classmethod
@@ -83,9 +87,26 @@ class SessionRecord:
             dbus_address=str(value["dbus_address"]),
             kwin_process=ProcessIdentity.from_dict(value["kwin_process"]),
             dbus_process=ProcessIdentity.from_dict(value["dbus_process"]),
+            application_processes=tuple(
+                ProcessIdentity.from_dict(process)
+                for process in value.get("application_processes", [])
+            ),
+            fake_input_version=(
+                None
+                if value.get("fake_input_version") is None
+                else int(value["fake_input_version"])
+            ),
         )
 
     def public_dict(self, *, status: str) -> dict[str, Any]:
+        fake_input_version = self.fake_input_version
+        if fake_input_version is None:
+            input_route = "separate; KWin fake-input protocol unavailable or unprobed"
+        else:
+            input_route = (
+                f"separate; KWin fake-input protocol v{fake_input_version}; "
+                "authorization/effect acknowledgement unavailable"
+            )
         return {
             "session_id": self.session_id,
             "name": self.name,
@@ -97,7 +118,7 @@ class SessionRecord:
             "isolation": {
                 "compositor": "separate",
                 "physical_displays": "unaffected",
-                "input_route": "separate; injection not enabled",
+                "input_route": input_route,
                 "unix_identity": "same as CLI process",
                 "filesystem": "private HOME, not an OS security sandbox",
             },
@@ -105,6 +126,14 @@ class SessionRecord:
                 "display.inspect": True,
                 "screenshot.capture": True,
                 "window.inspect": False,
-                "input.inject": False,
+                "application.launch": True,
+                "input.inject": fake_input_version is not None and fake_input_version >= 6,
+                "input.text": fake_input_version is not None and fake_input_version >= 6,
+                "input.click": fake_input_version is not None and fake_input_version >= 3,
+                "input.effect_ack": False,
             },
+            "launched_processes": [
+                {"pid": process.pid, "executable": process.executable}
+                for process in self.application_processes
+            ],
         }

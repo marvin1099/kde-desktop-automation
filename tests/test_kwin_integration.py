@@ -1,11 +1,13 @@
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from kde_interaction.backends.kwin_virtual import KWinVirtualBackend
 from kde_interaction.paths import RuntimePaths
-from kde_interaction.process import process_start_ticks
+from kde_interaction.process import process_start_ticks, processes_with_environment_marker
 from kde_interaction.sessions import SessionManager
 
 pytestmark = [
@@ -17,7 +19,7 @@ pytestmark = [
 ]
 
 
-def test_private_kwin_output_and_screenshot_round_trip(tmp_path) -> None:
+def test_private_kwin_output_and_screenshot_round_trip(tmp_path, monkeypatch) -> None:
     host_runtime = os.environ.get("XDG_RUNTIME_DIR")
     if not host_runtime:
         pytest.skip("an XDG_RUNTIME_DIR is required")
@@ -29,13 +31,70 @@ def test_private_kwin_output_and_screenshot_round_trip(tmp_path) -> None:
     )
     backend = KWinVirtualBackend(paths)
     manager = SessionManager(paths, backend)
+    process_markers: list[tuple[tuple[str, ...], str]] = []
+    real_popen = subprocess.Popen
+
+    def record_process_marker(command, *args, **kwargs):
+        environment = kwargs.get("env")
+        if environment is not None and "KDE_AI_PROCESS_MARKER" in environment:
+            process_markers.append(
+                (tuple(str(part) for part in command), environment["KDE_AI_PROCESS_MARKER"])
+            )
+        return real_popen(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", record_process_marker)
     session = manager.create_agent_session("integration", 1024, 768)
     screenshot = tmp_path / "private-output.png"
+    marked_helper: subprocess.Popen[bytes] | None = None
     try:
+        for identity in (session.kwin_process, session.dbus_process):
+            assert any(
+                command == identity.command and marker == session.session_id
+                for command, marker in process_markers
+            )
+
+        marked_helper = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            env=os.environ | {"KDE_AI_PROCESS_MARKER": session.session_id},
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        assert any(
+            process.pid == marked_helper.pid
+            for process in processes_with_environment_marker(session.session_id)
+        )
+
         displays = manager.displays(session.session_id)
         assert len(displays) == 1
         assert displays[0]["width"] == 1024
         assert displays[0]["height"] == 768
+
+        if session.fake_input_version is not None and session.fake_input_version >= 6:
+            receipt = manager.send_key(session.session_id, "CTRL+N")
+            assert receipt["server_roundtrip_completed"] is True
+            assert receipt["effect_verified"] is False
+            text_receipt = manager.send_text(session.session_id, "integration text")
+            assert text_receipt["server_roundtrip_completed"] is True
+            assert text_receipt["effect_verified"] is False
+
+        if session.fake_input_version is not None and session.fake_input_version >= 3:
+            click_receipt = manager.click(session.session_id, 512, 384)
+            assert click_receipt["server_roundtrip_completed"] is True
+            assert click_receipt["effect_verified"] is False
+
+        app = manager.launch_application(
+            session.session_id,
+            (
+                sys.executable,
+                "-c",
+                "import subprocess, sys, time; "
+                "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+                "time.sleep(60)",
+            ),
+        )
+        assert app["process_started"] is True
+        assert manager.get_session(session.session_id)["launched_processes"]
 
         capture = manager.screenshot(session.session_id, screenshot)
         assert capture["width"] == 1024
@@ -49,6 +108,9 @@ def test_private_kwin_output_and_screenshot_round_trip(tmp_path) -> None:
         )
         assert process_start_ticks(session.kwin_process.pid) != session.kwin_process.start_ticks
         assert process_start_ticks(session.dbus_process.pid) != session.dbus_process.start_ticks
+        assert processes_with_environment_marker(session.session_id) == []
+        if marked_helper is not None:
+            marked_helper.wait(timeout=2.0)
         if warnings:
             assert Path(session.runtime_dir).is_dir()
         else:

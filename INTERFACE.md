@@ -32,6 +32,23 @@ operation is supported when the active session or installed tools cannot do it.
 8. **Verify transitions.** Desktop actions are not transactions; report partial
    completion and verify important postconditions instead of assuming success.
 
+## Prototype status
+
+The current CLI has a working isolated-session slice: create/list/show/stop a
+private virtual KWin session, inspect its output, capture a screenshot, launch a
+process into its private Wayland and D-Bus environment, and submit key, text, or
+click events through that session's KWin fake-input protocol. Every action names
+the managed session; none falls back to the live desktop. Input is best-effort:
+KWin can ignore it and gives no authorization or application-delivery
+acknowledgement, so receipts report submission and leave effect verification to
+a fresh screenshot or other independent observation.
+
+Window enumeration and window-specific focus/targeting are still unavailable in
+the standalone compositor. The current launch command accepts an executable and
+argument vector (never a shell string) and is not a security boundary; a future
+user-facing app launcher should prefer validated desktop-entry IDs. Real-user-
+desktop attachment and input remain separate, unimplemented capabilities.
+
 ## Session model and isolation
 
 The interface should treat the **compositor session** as the outermost scope.
@@ -95,14 +112,17 @@ headless agent compositor; test it with its own Wayland socket and D-Bus session
 before relying on it for a full Plasma desktop. Plasma's per-screen virtual
 desktops organize windows but are not a security boundary either.
 
-The first implementation experiment should prove separation, not just that a
-virtual monitor appears: launch a test app in the agent session, move/click its
-pointer, capture its screen, and verify that the user's physical pointer,
-keyboard focus, game/window input, windows, and displays remain unchanged. Only
-then make this the default backend. When the user explicitly asks the agent to
-operate their real desktop, attach to `user-desktop` as a separate, visible,
-authorized mode; return to the private session afterward. Never “borrow” the
-user's mouse to control the private display.
+The private KWin experiment verified output capture, keyboard/text/click
+submission, and a Kate save/read-back workflow. A separately and explicitly
+scoped manual test also confirmed that this machine's live KWin v6 delivered
+text and Ctrl+S to a dedicated Kate test file; this was not exposed as a CLI
+host-desktop mode and does not establish a portable authorization guarantee.
+KWin still provides no delivery acknowledgement, so every live-desktop action
+must be independently verified and fail safely if ignored. When the user
+explicitly asks the agent to operate their real desktop, attach to
+`user-desktop` as a separate, visible, authorized mode; return to the private
+session afterward. Never “borrow” the user's mouse to control the private
+display.
 
 ## Public concepts
 
@@ -386,7 +406,8 @@ public model:
 | `kdotool` and its KWin script mode | Window enumeration/properties, focus, desktop/window operations, and other KWin-specific queries/actions |
 | `wlpdisplays` | Display discovery and monitor information |
 | `kdocktor` | Display configuration/settings changes, where supported |
-| `dotool` | Pointer and keyboard input; map logical desktop points to its normalized whole-desktop `mouseto` canvas and track tablet position separately from the real cursor |
+| KWin fake-input Wayland protocol | Session-bound key/text/click submission for supported private KWin sessions; best-effort with no app-delivery acknowledgement |
+| `dotool` | Potential explicitly authorized live-desktop input only; its host-wide uinput device must not be used for private-session actions |
 | Spectacle | Screen/display/window capture when the installed version supports the requested target |
 
 The exact command options and available actions should be detected and verified
