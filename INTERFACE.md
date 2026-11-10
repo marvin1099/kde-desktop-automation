@@ -7,10 +7,10 @@ Plasma session. The interface should expose useful desktop concepts—windows,
 virtual desktops, displays, and input targets—instead of making callers compose
 raw `dotool`, `kdotool`, and screenshot commands themselves.
 
-The CLI is the first transport. A future MCP server should expose the same
-operations and data types, not a separate set of semantics. The interface is a
-capability-aware facade over KDE and system tools; it should not claim that an
-operation is supported when the active session or installed tools cannot do it.
+The CLI and stdio MCP server expose the same target-aware operations and data
+types, not separate semantics. The interface is a capability-aware facade over
+KDE and system tools; it should not claim that an operation is supported when
+the active session or installed tools cannot do it.
 
 ## Design principles
 
@@ -34,20 +34,40 @@ operation is supported when the active session or installed tools cannot do it.
 
 ## Prototype status
 
-The current CLI has a working isolated-session slice: create/list/show/stop a
-private virtual KWin session, inspect its output, capture a screenshot, launch a
-process into its private Wayland and D-Bus environment, and submit key, text, or
-click events through that session's KWin fake-input protocol. Every action names
-the managed session; none falls back to the live desktop. Input is best-effort:
-KWin can ignore it and gives no authorization or application-delivery
-acknowledgement, so receipts report submission and leave effect verification to
-a fresh screenshot or other independent observation.
+The CLI has a working isolated-session slice: create/list/show/stop multiple
+private virtual KWin sessions, inspect outputs, capture screenshots, launch
+processes into each session's private Wayland and D-Bus environment, and submit
+key, text, or click events through session-bound KWin fake input. KWin's private
+Plasma window-management protocol also provides window UUIDs, title/app ID,
+geometry, fullscreen/active state, and activation requests when protocol v13+
+is available. The live desktop uses kdotool/KWin D-Bus for corresponding window
+operations. Shared commands select either target with `--session ID` or the
+explicit `--session user-desktop`; without `--session`, `KDE_AI_SESSION` may pin
+a private target, otherwise operations use the configured private default. An
+unset/stopped private target never falls back to the live desktop.
 
-Window enumeration and window-specific focus/targeting are still unavailable in
-the standalone compositor. The current launch command accepts an executable and
-argument vector (never a shell string) and is not a security boundary; a future
-user-facing app launcher should prefer validated desktop-entry IDs. Real-user-
-desktop attachment and input remain separate, unimplemented capabilities.
+`KDE_AI_SESSION` and the persisted private default are process-wide/shared
+selectors, not per-agent ownership. When multiple clients share the MCP server,
+pass a session ID on each desktop call; the optional
+`KDE_AI_MCP_REQUIRE_EXPLICIT_SESSION=1` server setting rejects omitted selectors.
+Session IDs are not authorization tokens: clients under this server share the
+same Unix-user authority over session lifecycle.
+
+The current shared subset includes window list/find/wait/inspect/activate,
+targeted key/text/normalized click input, display list, screenshots, and per-target
+capability reports. The current launch commands accept executable argument
+vectors (never shell strings) and are not security boundaries; a future
+user-facing launcher should prefer validated desktop-entry IDs. Both backends'
+input remains best-effort: KWin gives no application-delivery acknowledgement,
+so verify effects independently. X11, accessibility targets, and semantic
+app-level actions remain unimplemented.
+
+Targeted input currently means **active-window guarded**, not compositor-atomic
+per-window routing. The input capability/result reports that focus can change
+during submission and that delivery is not acknowledged. Private window records
+retain frame and content geometry separately. The live KWin D-Bus path exposes
+its reported geometry basis rather than asserting that it is identical to the
+private content geometry.
 
 ## Session model and isolation
 
@@ -85,13 +105,12 @@ observation should report the isolation properties (separate compositor,
 physical-screen visibility, input route, OS identity, and filesystem scope),
 not just a vague `isolated: true` flag.
 
-An explicit user-desktop mode is still valuable. It should require an explicit
-attach/authorization step, use the compositor's supported remote-control or
-input-emulation mechanism, show that the live user session is being controlled,
-and return to the isolated session on detach. Permissions should be scoped and
-revocable. A hidden output alone is not enough to claim isolation: applications
-may still share focus, clipboard, session services, and input with the user's
-desktop.
+The current CLI makes each live operation explicit with `--session user-desktop`
+and revalidates the active Wayland/KWin environment on each invocation; it does
+not persistently attach. A future persistent attach mode should have a visible,
+revocable authorization lifecycle. A hidden output alone is not enough to claim
+isolation: applications may still share focus, clipboard, session services, and
+input with the user's desktop.
 
 ### Candidate KDE implementations
 
@@ -112,17 +131,16 @@ headless agent compositor; test it with its own Wayland socket and D-Bus session
 before relying on it for a full Plasma desktop. Plasma's per-screen virtual
 desktops organize windows but are not a security boundary either.
 
-The private KWin experiment verified output capture, keyboard/text/click
-submission, and a Kate save/read-back workflow. A separately and explicitly
-scoped manual test also confirmed that this machine's live KWin v6 delivered
-text and Ctrl+S to a dedicated Kate test file; this was not exposed as a CLI
-host-desktop mode and does not establish a portable authorization guarantee.
-KWin still provides no delivery acknowledgement, so every live-desktop action
-must be independently verified and fail safely if ignored. When the user
-explicitly asks the agent to operate their real desktop, attach to
-`user-desktop` as a separate, visible, authorized mode; return to the private
-session afterward. Never “borrow” the user's mouse to control the private
-display.
+Private KWin's Plasma window protocol and live KWin's kdotool/D-Bus path now
+provide matching window metadata and activation commands; both targets use the
+same CLI syntax and selected-session Wayland socket for input. Opt-in tests
+exercise private Kate window targeting and read-only live window discovery on
+this machine. A prior manual test also confirmed live KWin v6 delivered text and
+Ctrl+S to a dedicated Kate test file, but neither that nor a server round trip
+establishes a portable authorization guarantee. KWin provides no
+application-delivery acknowledgement; verify meaningful live actions from a
+fresh screenshot or other app state. `--session user-desktop` is the visible
+opt-in; private `agent-session` remains the default and never falls back.
 
 ## Public concepts
 
@@ -181,6 +199,12 @@ re-resolve the target and recompute. If the backend cannot perform this safely,
 return an explicit unsupported/error result rather than click an approximate
 location.
 
+**Current prototype limitation:** private input uses content geometry when
+KWin provides `client_geometry`, otherwise frame geometry. Live input uses the
+geometry returned by KWin D-Bus, and reports `geometry_basis: "kwin-dbus-reported"`.
+Until the live adapter can provide and verify content bounds, normalized clicks
+are not guaranteed to hit the same semantic point across the two targets.
+
 ### `dotool` pointer mapping and state
 
 The public interface should use logical desktop coordinates from display
@@ -235,23 +259,47 @@ precise target-directed input.
 
 ## CLI shape
 
-Use a single command with noun/verb subcommands, human-readable output by
-default, and a versioned JSON mode for agents. The command name below is
-illustrative (`kde-ai`; choose a final name separately).
+Use noun/verb subcommands, human-readable output by default, and a versioned JSON
+mode for agents. Target selection is shared across operation groups:
 
-Every command should accept an optional global `--session SESSION`. If omitted,
-it uses the configured private `agent-session`; it must never silently fall
-back to `user-desktop`. Session management could look like:
+```text
+kde-ai session create --name agent-a --default --json
+kde-ai window list --json                           # private default only
+kde-ai --session agent-0123456789ab window list --json
+kde-ai --session user-desktop window list --json
+kde-ai --session user-desktop window find --app-id org.kde.kate --json
+kde-ai --session user-desktop window wait --app-id org.kde.kate --timeout 10 --json
+kde-ai --session agent-0123456789ab window inspect WINDOW_UUID --json
+kde-ai --session user-desktop window activate WINDOW_UUID --json
+kde-ai --session user-desktop input key WINDOW_UUID CTRL+END --json
+kde-ai --session user-desktop input type WINDOW_UUID $'\nTODO' --json
+kde-ai --session user-desktop input click WINDOW_UUID 0.8 0.9 --json
+kde-ai --session agent-0123456789ab display list --json
+kde-ai --session user-desktop screenshot --output /tmp/desktop.png
+kde-ai --session user-desktop capabilities --json
+```
+
+The first created private session becomes the default. `session use ID` changes
+it, and `session create --default` selects a new one. Selection precedence is
+`--session ID`, then private-only `KDE_AI_SESSION`, then the configured default.
+Additional agents should pass their session ID explicitly or receive a
+per-agent environment; omission never chooses the most recently created
+session. If no running private target is configured, shared commands fail with
+setup guidance rather than targeting another desktop. The old
+`session key/type/click/screenshot` and `user-desktop ...` command forms remain
+compatibility aliases while scripts migrate.
 
 ```text
 kde-ai session list
-kde-ai session create --kind agent --display 1920x1080
-kde-ai --session agent-default observe --format json
-kde-ai session attach --target user-desktop
+kde-ai session create --name agent-b --width 1920 --height 1080
+kde-ai session use agent-0123456789ab
 ```
 
-Attaching to `user-desktop` should trigger the required authorization and make
-the shared-session scope visible in subsequent results.
+The global `--session` selector is parsed before the operation group. Both
+targets revalidate the calling process's Wayland context on each invocation;
+`user-desktop` is never stored as the private default and does not have a
+persistent attach mode. The command syntax matches, while target scope and
+capabilities remain explicit in result envelopes.
 
 ```text
 kde-ai observe [--target session|window:REF|desktop:REF|display:REF] [--format json]
@@ -295,12 +343,12 @@ without changing the session. It returns the resolved target and intended
 effect. It must not be presented as a guarantee that the desktop will remain
 unchanged between planning and execution.
 
-An action may accept `--observed-in SNAPSHOT` to bind its target and
-preconditions to a recent observation. The CLI should reject an expired or
-invalidated snapshot rather than applying an action to a different object.
-`wait` predicates should be bounded and limited to observable state (for
-example, a window becoming focused or a display mode becoming active); they
-should return the latest observation on timeout, not silently continue.
+`window wait` currently supports a bounded wait for a unique app-ID/title
+match. Future `wait` predicates may include other observable state (such as a
+window becoming focused or fullscreen); they should return the latest
+observation on timeout, not silently continue. An action may later accept
+`--observed-in SNAPSHOT` to bind target and preconditions to a recent observation
+and reject stale IDs or geometry.
 
 ## Structured data
 
@@ -374,7 +422,9 @@ examples include `ambiguous_target`, `stale_target`, `unsupported`,
 codes for failures; JSON mode should still emit the error envelope.
 
 Screenshots should normally be written to a requested path and return that path
-plus capture metadata (target, geometry, timestamp, coordinate space). Avoid
+plus capture metadata (target, geometry, timestamp, coordinate space). The
+current shared screenshot command captures the full selected output, not an
+individual window. Avoid
 embedding large image data in normal JSON responses. A later MCP transport can
 return image content using MCP's image content type while preserving the same
 metadata. For visual automation, the agent must actually receive the image, not
@@ -403,10 +453,11 @@ public model:
 
 | Adapter/tool | Likely responsibility |
 | --- | --- |
-| `kdotool` and its KWin script mode | Window enumeration/properties, focus, desktop/window operations, and other KWin-specific queries/actions |
+| KWin's Plasma window-management Wayland protocol | Private-session window UUIDs, metadata, state, geometry, and activation requests, scoped to that private Wayland socket |
+| `kdotool` plus KWin's `org.kde.KWin.getWindowInfo` D-Bus method | Live-user window enumeration, properties, and activation, scoped to the explicit user target |
 | `wlpdisplays` | Display discovery and monitor information |
 | `kdocktor` | Display configuration/settings changes, where supported |
-| KWin fake-input Wayland protocol | Session-bound key/text/click submission for supported private KWin sessions; best-effort with no app-delivery acknowledgement |
+| KWin fake-input Wayland protocol | Session-bound key/text/click submission for either target when its protocol version supports the operation; best-effort with no app-delivery acknowledgement |
 | `dotool` | Potential explicitly authorized live-desktop input only; its host-wide uinput device must not be used for private-session actions |
 | Spectacle | Screen/display/window capture when the installed version supports the requested target |
 
@@ -446,13 +497,24 @@ also be layered above screenshots without changing window/display semantics.
 
 ## MCP mapping
 
-Expose the same operations as typed tools, for example `kde_observe`,
-`kde_window_list`, `kde_window_focus`, `kde_input_click`,
-`kde_screenshot`, and `kde_capabilities`. Schemas should reuse the CLI's target
-and coordinate-space types. Do not create an MCP tool that accepts an arbitrary
-shell command; tool execution should go through validated operations and
-structured results. Keep CLI and MCP as thin transports over one shared
-operation layer.
+The stdio server exposes typed tools over `DesktopOperations`: `kde_window_list`,
+`kde_window_find`, `kde_window_wait`, `kde_window_inspect`,
+`kde_window_activate`, `kde_input_key`, `kde_input_type`, `kde_input_click`,
+`kde_display_list`, `kde_screenshot`, and `kde_capabilities`. Private lifecycle
+tools cover list/create/show/use/stop/launch. Desktop tools take an optional
+`session` field: omission resolves `KDE_AI_SESSION` or the private default and
+the real desktop requires `session="user-desktop"` on that call. Set
+`KDE_AI_MCP_REQUIRE_EXPLICIT_SESSION=1` for a shared multi-agent server to reject
+omitted desktop selectors. `kde_session_use` changes the persisted default for
+all clients, not one agent. The server instructions repeat these constraints and
+the shared-UID lifecycle trust model to MCP clients. Domain errors retain stable
+error codes and structured details; both transports use a `schema_version` 1
+envelope, and screenshots return PNG image content alongside target metadata.
+
+No MCP tool accepts arbitrary shell commands. Launch is limited to argv in a
+managed private session, while window targeting, focus checks, normalized
+coordinates, capability reporting, and input verification use the same
+operation layer as the CLI.
 
 ## Suggested implementation order
 
@@ -466,9 +528,8 @@ operation layer.
    coordinate conversion, focus/delivery reporting, and stale-geometry checks.
 4. Add display settings as a separate, higher-impact operation family, with
    validation and a way to restore the prior configuration where possible.
-5. Add accessibility plus narrowly scoped Plasma/app operations (such as DND
-   and app launch) only where safe, testable providers exist; add MCP as another
-   transport over the same operation layer.
+5. Add accessibility plus narrowly scoped Plasma/app operations (such as DND)
+   only where safe, testable providers exist; expose them in both transports.
 
 This order delivers useful desktop awareness early, while postponing fragile
 coordinate input and monitor reconfiguration until their target and safety

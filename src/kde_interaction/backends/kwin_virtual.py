@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import re
 import selectors
@@ -8,14 +9,25 @@ import stat
 import subprocess
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 
 from kde_interaction.backends.displays import DisplayInfo, list_displays
 from kde_interaction.backends.kwin_input import InputReceipt, KWinFakeInput, fake_input_version
+from kde_interaction.backends.kwin_window_management import (
+    KWinWindowManagementClient,
+    normalize_window_id,
+    window_management_version,
+)
+from kde_interaction.backends.kwin_window_management import (
+    activate_window as activate_private_window,
+)
+from kde_interaction.backends.kwin_window_management import (
+    list_windows as list_private_windows,
+)
 from kde_interaction.backends.screenshots import capture_fullscreen
 from kde_interaction.errors import InteractionError
 from kde_interaction.models import ProcessIdentity, SessionRecord
@@ -205,6 +217,12 @@ class KWinVirtualBackend:
                 input_version = fake_input_version(session_paths.runtime_dir / wayland_display)
             except InteractionError:
                 input_version = None
+            try:
+                window_version = window_management_version(
+                    session_paths.runtime_dir / wayland_display
+                )
+            except InteractionError:
+                window_version = None
 
             record = SessionRecord(
                 session_id=session_id,
@@ -221,6 +239,7 @@ class KWinVirtualBackend:
                 kwin_process=kwin_identity,
                 dbus_process=dbus_identity,
                 fake_input_version=input_version,
+                window_management_version=window_version,
             )
             self._children[kwin_process.pid] = kwin_process
             self._children[dbus_process.pid] = dbus_process
@@ -353,6 +372,128 @@ class KWinVirtualBackend:
     def send_text(self, session: SessionRecord, text: str) -> InputReceipt:
         return self._send_input(session, "text", text)
 
+    def list_windows(self, session: SessionRecord) -> list[dict[str, Any]]:
+        self._require_running(session)
+        socket_path = Path(session.runtime_dir) / session.wayland_display
+        return cast(list[dict[str, Any]], list_private_windows(socket_path)["windows"])
+
+    def inspect_window(self, session: SessionRecord, window_id: str) -> dict[str, Any]:
+        windows = self.list_windows(session)
+        normalized_id = normalize_window_id(window_id)
+        for window in windows:
+            if window["window_id"] == normalized_id:
+                return window
+        raise InteractionError(
+            "stale_target",
+            "The selected window no longer exists in the private KWin session.",
+            details={"session_id": session.session_id, "window_id": normalized_id},
+        )
+
+    def activate_window(self, session: SessionRecord, window_id: str) -> dict[str, Any]:
+        self._require_running(session)
+        socket_path = Path(session.runtime_dir) / session.wayland_display
+        result = activate_private_window(socket_path, window_id)
+        if not result["active_verified"]:
+            raise InteractionError(
+                "window_activation_unverified",
+                "Private KWin did not report the selected window as active after activation.",
+                details={"session_id": session.session_id, "window_id": window_id},
+            )
+        return cast(dict[str, Any], result["window"])
+
+    def send_key_to_window(
+        self,
+        session: SessionRecord,
+        window_id: str,
+        chord: str,
+    ) -> dict[str, Any]:
+        return self._send_window_input(session, window_id, "key", chord)
+
+    def send_text_to_window(
+        self,
+        session: SessionRecord,
+        window_id: str,
+        text: str,
+    ) -> dict[str, Any]:
+        return self._send_window_input(session, window_id, "text", text)
+
+    def click_window(
+        self,
+        session: SessionRecord,
+        window_id: str,
+        x: float,
+        y: float,
+        button: str = "left",
+    ) -> dict[str, Any]:
+        if not (math.isfinite(x) and math.isfinite(y) and 0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+            raise InteractionError(
+                "coordinates_out_of_bounds",
+                "Window-relative click coordinates must be normalized values from 0 to 1.",
+                details={"x": x, "y": y},
+            )
+        self._require_running(session)
+        resolved_point: tuple[int, int, str | None] | None = None
+
+        def submit_click(
+            client: KWinFakeInput,
+            window: dict[str, Any],
+        ) -> InputReceipt:
+            nonlocal resolved_point
+            geometry = window.get("geometry")
+            if not isinstance(geometry, dict):
+                raise InteractionError(
+                    "window_geometry_unavailable",
+                    "KWin has not provided geometry for the selected private window.",
+                    details={"window_id": window_id},
+                )
+            absolute_x = round(float(geometry["x"]) + (float(geometry["width"]) - 1) * x)
+            absolute_y = round(float(geometry["y"]) + (float(geometry["height"]) - 1) * y)
+            if not (0 <= absolute_x < session.width and 0 <= absolute_y < session.height):
+                raise InteractionError(
+                    "coordinates_out_of_bounds",
+                    "The resolved window-relative point is outside the private virtual output.",
+                    details={
+                        "x": absolute_x,
+                        "y": absolute_y,
+                        "width": session.width,
+                        "height": session.height,
+                    },
+                )
+            basis = window.get("geometry_basis")
+            resolved_point = (
+                absolute_x,
+                absolute_y,
+                basis if isinstance(basis, str) else None,
+            )
+            return client.click(absolute_x, absolute_y, button)
+
+        receipt, active_before, active_after = self._submit_window_input(
+            session,
+            window_id,
+            submit_click,
+        )
+        if resolved_point is None:
+            raise InteractionError(
+                "window_click_unresolved",
+                "KWin input completed without resolving the selected window click point.",
+            )
+        absolute_x, absolute_y, geometry_basis = resolved_point
+        result = self._private_input_result(
+            session,
+            window_id,
+            receipt,
+            active_before,
+            active_after,
+        )
+        result["requested_point"] = {"x": x, "y": y, "space": "normalized-window"}
+        result["resolved_point"] = {
+            "x": absolute_x,
+            "y": absolute_y,
+            "space": "logical-desktop-pixels",
+            "geometry_basis": geometry_basis,
+        }
+        return result
+
     def click(self, session: SessionRecord, x: int, y: int, button: str) -> InputReceipt:
         if not (0 <= x < session.width and 0 <= y < session.height):
             raise InteractionError(
@@ -380,6 +521,122 @@ class KWinVirtualBackend:
             if kind == "key":
                 return client.send_key(value)
             return client.send_text(value)
+
+    def _send_window_input(
+        self,
+        session: SessionRecord,
+        window_id: str,
+        kind: str,
+        value: str,
+    ) -> dict[str, Any]:
+        receipt, active_before, active_after = self._submit_window_input(
+            session,
+            window_id,
+            lambda client, _window: (
+                client.send_key(value) if kind == "key" else client.send_text(value)
+            ),
+        )
+        return self._private_input_result(
+            session,
+            window_id,
+            receipt,
+            active_before,
+            active_after,
+        )
+
+    def _submit_window_input(
+        self,
+        session: SessionRecord,
+        window_id: str,
+        submit: Callable[[KWinFakeInput, dict[str, Any]], InputReceipt],
+    ) -> tuple[InputReceipt, str, str | None]:
+        self._require_running(session)
+        normalized_id = normalize_window_id(window_id)
+        self.inspect_window(session, normalized_id)
+        socket_path = Path(session.runtime_dir) / session.wayland_display
+        with KWinFakeInput(
+            socket_path,
+            application_name="kde-ai",
+            reason=(
+                f"Window-scoped input in private session {session.session_id} "
+                f"to window {normalized_id}."
+            ),
+        ) as client:
+            windows = self.list_windows(session)
+            selected_window = next(
+                (window for window in windows if window["window_id"] == normalized_id),
+                None,
+            )
+            if selected_window is None:
+                raise InteractionError(
+                    "stale_target",
+                    "The selected window disappeared before input submission.",
+                    details={"session_id": session.session_id, "window_id": normalized_id},
+                )
+            active_ids = [window["window_id"] for window in windows if window["active"]]
+            if len(active_ids) > 1:
+                raise InteractionError(
+                    "invalid_backend_data",
+                    "Private KWin reported more than one active window.",
+                    details={"session_id": session.session_id, "active_window_ids": active_ids},
+                )
+            active_before = active_ids[0] if active_ids else None
+            if active_before != normalized_id:
+                raise InteractionError(
+                    "window_not_active",
+                    "Input requires the selected private window to be active. "
+                    "Activate it explicitly first.",
+                    details={
+                        "session_id": session.session_id,
+                        "window_id": normalized_id,
+                        "active_window_id": active_before,
+                    },
+                )
+            receipt = submit(client, selected_window)
+        assert active_before is not None
+        return receipt, active_before, self._active_window_id(session)
+
+    def _active_window_id(self, session: SessionRecord) -> str | None:
+        socket_path = Path(session.runtime_dir) / session.wayland_display
+        with KWinWindowManagementClient(socket_path) as client:
+            active = [window["window_id"] for window in client.windows() if window["active"]]
+        if len(active) > 1:
+            raise InteractionError(
+                "invalid_backend_data",
+                "Private KWin reported more than one active window.",
+                details={"session_id": session.session_id, "active_window_ids": active},
+            )
+        return active[0] if active else None
+
+    def _private_input_result(
+        self,
+        session: SessionRecord,
+        window_id: str,
+        receipt: InputReceipt,
+        active_before: str,
+        active_after: str | None,
+    ) -> dict[str, Any]:
+        data = receipt.to_dict(
+            session_id=session.session_id,
+            wayland_display=session.wayland_display,
+        )
+        normalized_id = normalize_window_id(window_id)
+        data["target"]["window_id"] = normalized_id
+        data["target"]["keyboard_focus"] = (
+            "active KWin window verified immediately before submission"
+        )
+        data["target"]["focus_before"] = active_before
+        data["focus_after"] = active_after
+        data["focus_still_matches_target"] = active_after == normalized_id
+        data["input_semantics"] = {
+            "targeting": "active-window-guard",
+            "focus_verified_before_submission": True,
+            "atomic_window_routing": False,
+            "delivery_acknowledged": False,
+        }
+        if active_after != normalized_id:
+            data["note"] += " KWin focus changed during the action; delivery is unknown."
+        return data
 
     def _stop_application_processes(
         self,

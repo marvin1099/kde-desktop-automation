@@ -1,6 +1,8 @@
 import os
+import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -115,3 +117,58 @@ def test_private_kwin_output_and_screenshot_round_trip(tmp_path, monkeypatch) ->
             assert Path(session.runtime_dir).is_dir()
         else:
             assert not Path(session.runtime_dir).exists()
+
+
+def test_private_window_list_activation_and_input_are_session_scoped(tmp_path) -> None:
+    if shutil.which("kate") is None:
+        pytest.skip("Kate is required for the private window-management integration test")
+    host_runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not host_runtime:
+        pytest.skip("an XDG_RUNTIME_DIR is required")
+    paths = RuntimePaths.from_environment(
+        {
+            "XDG_RUNTIME_DIR": host_runtime,
+            "XDG_STATE_HOME": str(tmp_path / "state"),
+        }
+    )
+    backend = KWinVirtualBackend(paths)
+    manager = SessionManager(paths, backend)
+    session = manager.create_agent_session("private-window-management", 1024, 768)
+    scratch_file = tmp_path / "private-window-scratch.txt"
+    scratch_file.write_text("isolated scratch document\n", encoding="utf-8")
+    try:
+        assert session.window_management_version is not None
+        assert session.window_management_version >= 13
+        manager.launch_application(session.session_id, ("kate", "--new", str(scratch_file)))
+
+        deadline = time.monotonic() + 8.0
+        window: dict[str, object] | None = None
+        while time.monotonic() < deadline:
+            listing = manager.list_windows(session.session_id)
+            matches = [
+                item for item in listing["windows"] if "private-window-scratch.txt" in item["title"]
+            ]
+            if matches:
+                window = matches[0]
+                break
+            time.sleep(0.1)
+        assert window is not None, "Kate did not appear in private KWin window management"
+
+        window_id = str(window["window_id"])
+        inspected = manager.inspect_window(session.session_id, window_id)["window"]
+        assert inspected["app_id"] == "org.kde.kate"
+        assert inspected["geometry"]["coordinate_space"] == "logical-desktop-pixels"
+        activated = manager.activate_window(session.session_id, window_id)
+        assert activated["active_window_verified"] is True
+
+        key_receipt = manager.send_key_to_window(session.session_id, window_id, "CTRL+END")
+        assert key_receipt["focus_still_matches_target"] is True
+        manager.send_text_to_window(session.session_id, window_id, "TODO")
+        manager.send_key_to_window(session.session_id, window_id, "CTRL+S")
+        assert "TODO" in scratch_file.read_text(encoding="utf-8")
+    finally:
+        _, warnings = manager.stop(session.session_id)
+        assert warnings in (
+            [],
+            [f"Private runtime directory needs manual cleanup: {session.runtime_dir}"],
+        )

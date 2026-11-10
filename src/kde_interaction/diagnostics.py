@@ -6,6 +6,7 @@ import shutil
 from typing import Any
 
 from kde_interaction import __version__
+from kde_interaction.backends.user_desktop import user_desktop_environment_issue
 from kde_interaction.process import pidfd_supported
 
 _TOOLS = (
@@ -26,9 +27,13 @@ def build_doctor_report() -> dict[str, Any]:
     displays = tools["wlpdisplays"] is not None
     spectacle = tools["spectacle"] is not None
     wayland_client = ctypes.util.find_library("wayland-client") is not None
+    user_desktop_issue = user_desktop_environment_issue()
+    if user_desktop_issue is None and tools["kdotool"] is None:
+        user_desktop_issue = "kdotool is required for live window discovery and activation."
+    user_desktop_ready = user_desktop_issue is None
     process_control = pidfd_supported()
     limitations = [
-        "window inspection/control is not connected to standalone KWin's D-Bus API",
+        "private window management is probed per session through KWin's Plasma window protocol",
         "dotool uses host-wide uinput and is deliberately disabled for agent-session",
         "KWin fake input may be ignored; submission is not proof of application delivery",
         "input protocol versions are probed per private session; doctor reports prerequisites only",
@@ -50,7 +55,11 @@ def build_doctor_report() -> dict[str, Any]:
             "display.inspect": displays,
             "screenshot.capture": spectacle,
             "session.stop": process_control,
+            "window.list": False,
             "window.inspect": False,
+            "window.activate": False,
+            "window.protocol_probe_available": kwin and wayland_client,
+            "input.window_targeted": False,
             "application.launch": kwin,
             "input.inject": False,
             "input.text": False,
@@ -62,12 +71,32 @@ def build_doctor_report() -> dict[str, Any]:
         },
         "user_desktop": {
             "attached": False,
-            "interaction_enabled": False,
-            "reason": "explicit, permissioned user-session attachment is not implemented yet",
+            "available": user_desktop_ready,
+            "availability_kind": "environment and executable prerequisites only",
+            "explicit_command_required": True,
+            "window.list": None,
+            "window.find": None,
+            "window.wait": None,
+            "window.inspect": None,
+            "window.activate": None,
+            "window.capability_probe_performed": False,
+            "screenshot.capture": user_desktop_ready and spectacle,
+            "input.protocol_version": None,
+            "input.key": None,
+            "input.text": None,
+            "input.click": None,
+            "input.capability_probe_performed": False,
+            "input.effect_ack": False,
+            "reason": user_desktop_issue,
+            "limitations": [
+                "Live window and input capabilities are not probed by doctor; "
+                "select user-desktop explicitly with the capabilities command."
+            ],
         },
         "safety": {
             "default_scope": "agent-session",
             "silent_fallback_to_user_desktop": False,
+            "explicit_user_desktop_command_required": True,
             "os_security_sandbox": False,
         },
     }

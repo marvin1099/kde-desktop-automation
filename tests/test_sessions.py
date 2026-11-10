@@ -118,6 +118,8 @@ def test_session_lifecycle_is_scoped_to_agent_session(manager: SessionManager) -
     assert public["isolation"]["physical_displays"] == "unaffected"
     assert public["capabilities"]["input.inject"] is True
     assert public["capabilities"]["input.effect_ack"] is False
+    assert public["is_default"] is True
+    assert manager.default_session_id() == created.session_id
 
     displays = manager.displays(created.session_id)
     assert displays[0]["name"] == "Virtual-0"
@@ -129,15 +131,88 @@ def test_session_lifecycle_is_scoped_to_agent_session(manager: SessionManager) -
     assert manager.list_sessions()[0]["status"] == "stopped"
 
 
+def test_private_default_selection_is_explicit_and_does_not_follow_new_sessions(
+    manager: SessionManager,
+) -> None:
+    first = manager.create_agent_session("first", 640, 480)
+    second = manager.create_agent_session("second", 640, 480)
+
+    assert manager.default_session_id() == first.session_id
+    assert manager.get_session(second.session_id)["is_default"] is False
+
+    selected = manager.set_default_session(second.session_id)
+
+    assert selected["is_default"] is True
+    assert manager.get_session(first.session_id)["is_default"] is False
+    assert manager.default_session_id() == second.session_id
+
+
+def test_first_default_claim_is_serialized_across_concurrent_creators(
+    manager: SessionManager,
+) -> None:
+    first = manager.create_agent_session("first", 640, 480)
+    second = manager.create_agent_session("second", 640, 480)
+    manager.store.default_path.unlink()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(
+            executor.map(
+                manager.store.set_default_session_if_unset,
+                (first.session_id, second.session_id),
+            )
+        )
+
+    assert sorted(results) == [False, True]
+    assert manager.default_session_id() in {first.session_id, second.session_id}
+
+
+def test_failed_first_default_selection_stops_and_records_the_new_session(
+    manager: SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_default(_session_id: str) -> bool:
+        raise InteractionError("default_session_write_failed", "cannot write default")
+
+    monkeypatch.setattr(manager.store, "set_default_session_if_unset", fail_default)
+
+    with pytest.raises(InteractionError) as error:
+        manager.create_agent_session("default-failure", 640, 480)
+
+    session_id = error.value.details["session_id"]
+    assert error.value.code == "session_default_selection_failed"
+    assert manager.store.load(session_id).stopped_at is not None
+    assert session_id not in manager.backend.running
+
+
+def test_private_window_operations_fail_closed_when_protocol_was_not_probed(
+    manager: SessionManager,
+) -> None:
+    session = manager.create_agent_session("no-window-protocol", 640, 480)
+
+    with pytest.raises(InteractionError) as error:
+        manager.list_windows(session.session_id)
+
+    assert error.value.code == "capability_unavailable"
+    assert error.value.details["capability"] == (
+        "window.list / window.find / window.wait / window.inspect / "
+        "window.activate / window-targeted input"
+    )
+
+
 def test_session_capabilities_follow_the_probed_fake_input_version(
     manager: SessionManager,
 ) -> None:
     session = manager.create_agent_session("versioned-input", 1280, 800)
+    session = replace(session, window_management_version=13)
 
     older = replace(session, fake_input_version=5).public_dict(status="running")
-    assert older["capabilities"]["input.inject"] is False
+    assert older["capabilities"]["input.inject"] is True
+    assert older["capabilities"]["input.key"] is False
     assert older["capabilities"]["input.text"] is False
     assert older["capabilities"]["input.click"] is True
+    assert older["capabilities"]["window.wait"] is True
+    assert older["input_semantics"]["delivery_acknowledged"] is False
+    assert "focus can still change" in older["input_semantics"]["window_targeting"]
 
     legacy_record = session.to_dict()
     legacy_record.pop("application_processes")
@@ -244,3 +319,15 @@ def test_stopped_session_cannot_be_screenshotted(manager: SessionManager, tmp_pa
 
     with pytest.raises(InteractionError, match="not running"):
         manager.screenshot(session.session_id, tmp_path / "shot.png")
+
+
+def test_private_screenshot_includes_target_and_shared_coordinate_space(
+    manager: SessionManager,
+    tmp_path: Path,
+) -> None:
+    session = manager.create_agent_session("triage", 1280, 800)
+
+    capture = manager.screenshot(session.session_id, tmp_path / "shot.png")
+
+    assert capture["target"] == {"kind": "agent-session", "session_id": session.session_id}
+    assert capture["coordinate_space"] == "screenshot-pixels"

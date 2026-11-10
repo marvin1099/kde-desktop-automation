@@ -115,10 +115,12 @@ class InputReceipt:
             "events_submitted": self.events_submitted,
             "server_roundtrip_completed": self.server_roundtrip_completed,
             "effect_verified": self.effect_verified,
+            "input_routing": "selected compositor active focus; not directly window-bound",
             "note": (
                 "KWin's fake-input protocol does not acknowledge authorization or app delivery. "
-                "The request reached the selected Wayland server; independently inspect a fresh "
-                "screenshot or app state before treating it as effective."
+                "The request reached the selected Wayland server and is routed through compositor "
+                "focus; independently inspect a fresh screenshot or app state before treating it "
+                "as effective."
             ),
         }
 

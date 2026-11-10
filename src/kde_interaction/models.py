@@ -51,6 +51,7 @@ class SessionRecord:
     dbus_process: ProcessIdentity
     application_processes: tuple[ProcessIdentity, ...] = ()
     fake_input_version: int | None = None
+    window_management_version: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -69,6 +70,7 @@ class SessionRecord:
             "dbus_process": self.dbus_process.to_dict(),
             "application_processes": [process.to_dict() for process in self.application_processes],
             "fake_input_version": self.fake_input_version,
+            "window_management_version": self.window_management_version,
         }
 
     @classmethod
@@ -96,10 +98,22 @@ class SessionRecord:
                 if value.get("fake_input_version") is None
                 else int(value["fake_input_version"])
             ),
+            window_management_version=(
+                None
+                if value.get("window_management_version") is None
+                else int(value["window_management_version"])
+            ),
         )
 
     def public_dict(self, *, status: str) -> dict[str, Any]:
         fake_input_version = self.fake_input_version
+        window_management_available = (
+            self.window_management_version is not None and self.window_management_version >= 13
+        )
+        session_key_available = fake_input_version is not None and fake_input_version >= 6
+        session_click_available = fake_input_version is not None and fake_input_version >= 3
+        window_key_available = window_management_available and session_key_available
+        window_click_available = window_management_available and session_click_available
         if fake_input_version is None:
             input_route = "separate; KWin fake-input protocol unavailable or unprobed"
         else:
@@ -125,13 +139,33 @@ class SessionRecord:
             "capabilities": {
                 "display.inspect": True,
                 "screenshot.capture": True,
-                "window.inspect": False,
+                "window.list": window_management_available,
+                "window.find": window_management_available,
+                "window.wait": window_management_available,
+                "window.inspect": window_management_available,
+                "window.activate": window_management_available,
                 "application.launch": True,
-                "input.inject": fake_input_version is not None and fake_input_version >= 6,
-                "input.text": fake_input_version is not None and fake_input_version >= 6,
-                "input.click": fake_input_version is not None and fake_input_version >= 3,
+                "input.key": window_key_available,
+                "input.text": window_key_available,
+                "input.click": window_click_available,
+                "input.inject": session_click_available,
+                "input.session.click": session_click_available,
+                "input.focus_guard": window_management_available and session_click_available,
+                "input.window_targeted": window_click_available,
                 "input.effect_ack": False,
             },
+            "input_semantics": {
+                "routing": "KWin fake input through the selected compositor's active focus",
+                "window_targeting": "active-window-guard; focus can still change during submission",
+                "atomic_window_routing": False,
+                "delivery_acknowledged": False,
+            },
+            "input_protocol_version": fake_input_version,
+            "window_management_protocol_version": self.window_management_version,
+            "limitations": [
+                "KWin fake input may be ignored; submission is not proof of application delivery",
+                "the private window protocol is a privileged KDE implementation detail",
+            ],
             "launched_processes": [
                 {"pid": process.pid, "executable": process.executable}
                 for process in self.application_processes

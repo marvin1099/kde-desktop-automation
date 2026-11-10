@@ -1,16 +1,20 @@
 [project]
 name = "kde-interaction"
 version = "0.1.0"
-description = "A session-scoped, AI-friendly KDE desktop interaction CLI"
+description = "An AI-friendly KDE interaction CLI with private and explicit live-desktop targets"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "dbus-next>=0.2.3,<0.3.0",
+    "mcp>=1.20.0,<2.0.0",
+    "pydantic>=2.0.0,<3.0.0",
     "rich>=14.0.0,<15.0.0",
     "typer>=0.16.0,<1.0.0",
 ]
 
 [project.scripts]
 kde-ai = "kde_interaction.cli:main"
+kde-ai-mcp = "kde_interaction.mcp_server:main"
 
 [dependency-groups]
 dev = [
@@ -27,7 +31,9 @@ build-backend = "uv_build"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--strict-markers --strict-config"
-markers = ["integration: starts a private KWin compositor for backend smoke tests"]
+markers = [
+    "integration: starts a private KWin compositor or inspects the live user desktop",
+]
 
 [tool.coverage.run]
 branch = true
