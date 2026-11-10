@@ -19,7 +19,11 @@ from kde_desktop_automation.sessions import SessionManager
 
 app = typer.Typer(
     name="kde-desktop",
-    help="Inspect and operate KDE through explicit, session-scoped targets.",
+    help=(
+        "Inspect and operate KDE through explicit, session-scoped targets. "
+        "For shared commands, put --session before the command group; without it, "
+        "the private default is used, never the live desktop."
+    ),
     no_args_is_help=True,
     add_completion=False,
 )
@@ -35,15 +39,37 @@ user_input_app = typer.Typer(
     no_args_is_help=True,
 )
 window_app = typer.Typer(
-    help="List, inspect, find, and activate windows in the selected session.", no_args_is_help=True
+    help=(
+        "List, inspect, find, and activate windows in the selected session. "
+        "Select it with global --session before 'window'."
+    ),
+    no_args_is_help=True,
 )
-input_app = typer.Typer(help="Send input to an explicitly selected window.", no_args_is_help=True)
-display_app = typer.Typer(help="Inspect displays in the selected session.", no_args_is_help=True)
+input_app = typer.Typer(
+    help=(
+        "Send input to an explicitly selected window; choose the target with --session "
+        "before 'input'."
+    ),
+    no_args_is_help=True,
+)
+display_app = typer.Typer(
+    help="Inspect displays in the selected session; choose it with --session before 'display'.",
+    no_args_is_help=True,
+)
 media_app = typer.Typer(
-    help="Inspect and control MPRIS media players in the selected session.", no_args_is_help=True
+    help=(
+        "Inspect and control MPRIS media players in the selected session. "
+        "Choose it with global --session before 'media'."
+    ),
+    no_args_is_help=True,
 )
 audio_app = typer.Typer(
-    help="Inspect and control live PipeWire audio devices and output streams.", no_args_is_help=True
+    help=(
+        "Inspect and control live PipeWire audio devices and output streams. "
+        "Live audio only: put --session user-desktop before 'audio'; "
+        "private sessions are unsupported."
+    ),
+    no_args_is_help=True,
 )
 app.add_typer(user_desktop_app, name="user-desktop")
 user_desktop_app.add_typer(user_window_app, name="window")
@@ -64,8 +90,9 @@ def configure_target(
         None,
         "--session",
         help=(
-            "Target a private session ID or explicitly 'user-desktop'; overrides "
-            "KDE_DESKTOP_SESSION and the private default."
+            "Before the command group, target a private session ID or explicitly "
+            "'user-desktop'; overrides KDE_DESKTOP_SESSION and the private default. "
+            "Audio commands require user-desktop."
         ),
     ),
 ) -> None:
@@ -221,7 +248,7 @@ def list_windows(
     ctx: Context,
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
-    """List windows for the private default or explicit --session target."""
+    """List windows for the selected target; set global --session before 'window'."""
     _run(lambda: (_operations(ctx).window_list(), []), json_output=json_output)
 
 
@@ -396,7 +423,7 @@ def list_audio(
     ctx: Context,
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
-    """List PipeWire sinks, sources, defaults, and active output streams."""
+    """List PipeWire devices and streams; live only, use --session user-desktop before audio."""
     _run(lambda: (_operations(ctx).audio_list(), []), json_output=json_output)
 
 
@@ -409,7 +436,7 @@ def set_audio_default(
     device_name: str = typer.Argument(..., help="Exact device name returned by audio list."),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
-    """Set the default output sink or input source and verify it by reading back."""
+    """Set and verify a default device; live only, use --session user-desktop before audio."""
     _run(
         lambda: (_operations(ctx).audio_set_default(direction, device_name), []),
         json_output=json_output,
@@ -426,7 +453,7 @@ def set_audio_volume(
     volume_percent: float = typer.Argument(..., help="Absolute volume from 0 through 100 percent."),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
-    """Set an exact device's volume percentage and verify the effective level."""
+    """Set and verify a device volume; live only, use --session user-desktop before audio."""
     _run(
         lambda: (
             _operations(ctx).audio_set_volume(direction, device_name, volume_percent),
@@ -446,7 +473,7 @@ def set_audio_mute(
     state: Literal["mute", "unmute"] = typer.Argument(..., help="Explicit mute state; no toggle."),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
-    """Set an exact device's mute state and verify it by reading back."""
+    """Set and verify device mute; live only, use --session user-desktop before audio."""
     _run(
         lambda: (_operations(ctx).audio_set_mute(direction, device_name, state == "mute"), []),
         json_output=json_output,
@@ -470,7 +497,7 @@ def route_audio_stream(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
-    """Move only one verified output stream to another sink."""
+    """Move one verified stream; live only, use --session user-desktop before audio."""
     _run(
         lambda: (
             _operations(ctx).audio_route_stream(

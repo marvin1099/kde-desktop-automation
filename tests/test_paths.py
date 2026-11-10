@@ -17,6 +17,8 @@ def test_runtime_paths_create_private_directories(tmp_path) -> None:
     session_id = "agent-0123456789ab"
     session = paths.for_session(session_id, create=True)
 
+    assert paths.runtime_root == runtime / "kde-desktop-automation"
+    assert paths.state_root == tmp_path / "state" / "kde-desktop-automation"
     assert session.runtime_dir.is_dir()
     assert session.home_dir.is_dir()
     assert stat.S_IMODE(session.runtime_dir.stat().st_mode) == 0o700

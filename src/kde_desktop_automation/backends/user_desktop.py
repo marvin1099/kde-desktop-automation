@@ -27,11 +27,8 @@ from kde_desktop_automation.process import require_executable, require_success, 
 from kde_desktop_automation.window_selection import find_one_window
 
 _WINDOW_ID = re.compile(r"^\{?([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})\}?$")
-_PRIVATE_RUNTIME_MARKER = "/kde-interaction/sessions/"
-_PRIVATE_PROCESS_MARKERS = (
-    "KDE_DESKTOP_AUTOMATION_PROCESS_MARKER",
-    "KDE_AI_PROCESS_MARKER",
-)
+_PRIVATE_RUNTIME_MARKER = "/kde-desktop-automation/sessions/"
+_PRIVATE_PROCESS_MARKERS = ("KDE_DESKTOP_AUTOMATION_PROCESS_MARKER",)
 _KWINDOW_SERVICE = "org.kde.KWin"
 _KWINDOW_PATH = "/KWin"
 _KWINDOW_INTERFACE = "org.kde.KWin"

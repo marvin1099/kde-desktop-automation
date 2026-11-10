@@ -236,6 +236,29 @@ def test_user_desktop_window_list_requires_explicit_namespace_and_returns_json(
     assert "user-desktop" in root_help.stdout
 
 
+def test_nested_help_explains_global_target_placement_and_live_audio_limit() -> None:
+    runner = CliRunner()
+
+    root_help = runner.invoke(app, ["--help"])
+    window_help = runner.invoke(app, ["window", "--help"])
+    window_list_help = runner.invoke(app, ["window", "list", "--help"])
+    audio_help = runner.invoke(app, ["audio", "--help"])
+    audio_list_help = runner.invoke(app, ["audio", "list", "--help"])
+    audio_list_help_text = " ".join(audio_list_help.stdout.split())
+
+    assert root_help.exit_code == 0
+    assert "--session before the command group" in root_help.stdout
+    assert window_help.exit_code == 0
+    assert "global --session before 'window'" in window_help.stdout
+    assert window_list_help.exit_code == 0
+    assert "global --session before 'window'" in window_list_help.stdout
+    assert audio_help.exit_code == 0
+    assert "--session user-desktop before 'audio'" in audio_help.stdout
+    assert audio_list_help.exit_code == 0
+    assert "live only" in audio_list_help_text
+    assert "--session user-desktop before audio" in audio_list_help_text
+
+
 def test_shared_window_commands_use_explicit_user_desktop_session_only(monkeypatch) -> None:
     class FakeUserDesktopBackend:
         def list_windows(self):

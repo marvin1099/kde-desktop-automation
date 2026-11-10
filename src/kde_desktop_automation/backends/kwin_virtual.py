@@ -737,7 +737,6 @@ class KWinVirtualBackend:
     def _validate_session_identity(self, session: SessionRecord) -> None:
         session_paths = self.paths.for_session(session.session_id)
         expected_wayland = f"kde-desktop-{session.session_id.removeprefix('agent-')}"
-        legacy_wayland = f"kde-ai-{session.session_id.removeprefix('agent-')}"
         expected_bus_path = session_paths.runtime_dir / "bus"
         expected_bus_address = f"unix:path={quote(str(expected_bus_path), safe='/')}"
         application_markers = [process.marker for process in session.application_processes]
@@ -745,7 +744,7 @@ class KWinVirtualBackend:
             session.backend == self.name
             and session.runtime_dir == str(session_paths.runtime_dir)
             and session.home_dir == str(session_paths.home_dir)
-            and session.wayland_display in {expected_wayland, legacy_wayland}
+            and session.wayland_display == expected_wayland
             and session.kwin_process.marker == session.wayland_display
             and session.dbus_process.marker == str(expected_bus_path)
             and session.kwin_process.pid != session.dbus_process.pid

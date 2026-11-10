@@ -68,11 +68,9 @@ def test_runtime_cleanup_rechecks_mounts_during_recursion(tmp_path, monkeypatch)
     assert mounted_data.read_text(encoding="utf-8") == "must not be removed after a late mount"
 
 
-@pytest.mark.parametrize("display_prefix", ["kde-desktop-", "kde-ai-"])
 def test_stop_preserves_runtime_if_process_identity_is_unverified(
     tmp_path,
     monkeypatch,
-    display_prefix: str,
 ) -> None:
     host_runtime = tmp_path / "runtime"
     host_runtime.mkdir(mode=0o700)
@@ -87,7 +85,7 @@ def test_stop_preserves_runtime_if_process_identity_is_unverified(
     session_paths = paths.for_session(session_id, create=True)
     owned_marker = session_paths.runtime_dir / "keep-for-manual-cleanup"
     owned_marker.write_text("do not delete while process status is unknown", encoding="utf-8")
-    wayland_display = f"{display_prefix}{session_id.removeprefix('agent-')}"
+    wayland_display = f"kde-desktop-{session_id.removeprefix('agent-')}"
     kwin_process = ProcessIdentity(
         pid=os.getpid(),
         start_ticks=123,
@@ -158,7 +156,7 @@ def test_stop_rejects_process_identities_from_another_session(tmp_path) -> None:
         pid=os.getpid() + 1,
         start_ticks=123,
         executable="/usr/bin/dbus-daemon",
-        marker=f"{host_runtime}/kde-interaction/sessions/{other_session}/bus",
+        marker=f"{host_runtime}/kde-desktop-automation/sessions/{other_session}/bus",
         command=("/usr/bin/dbus-daemon",),
     )
     session = SessionRecord(

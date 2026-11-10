@@ -44,15 +44,11 @@ def test_process_identity_can_be_verified_without_signalling() -> None:
     assert process_state(os.getpid()) not in (None, "Z")
 
 
-@pytest.mark.parametrize(
-    "marker_environment",
-    ["KDE_DESKTOP_AUTOMATION_PROCESS_MARKER", "KDE_AI_PROCESS_MARKER"],
-)
-def test_process_identity_can_use_an_environment_marker(marker_environment: str) -> None:
+def test_process_identity_can_use_an_environment_marker() -> None:
     marker = f"kde-desktop-marker-{uuid.uuid4().hex}"
     child = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(60)"],
-        env=os.environ | {marker_environment: marker},
+        env=os.environ | {"KDE_DESKTOP_AUTOMATION_PROCESS_MARKER": marker},
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -74,13 +70,8 @@ def test_process_identity_can_use_an_environment_marker(marker_environment: str)
             child.wait(timeout=1.0)
 
 
-@pytest.mark.parametrize(
-    "marker_environment",
-    ["KDE_DESKTOP_AUTOMATION_PROCESS_MARKER", "KDE_AI_PROCESS_MARKER"],
-)
 def test_environment_marker_finds_descendants_for_session_cleanup(
     tmp_path,
-    marker_environment: str,
 ) -> None:
     marker = f"kde-desktop-tree-{uuid.uuid4().hex}"
     child_ready = tmp_path / "child-ready"
@@ -95,7 +86,7 @@ def test_environment_marker_finds_descendants_for_session_cleanup(
     )
     parent = subprocess.Popen(
         [sys.executable, "-c", script],
-        env=os.environ | {marker_environment: marker},
+        env=os.environ | {"KDE_DESKTOP_AUTOMATION_PROCESS_MARKER": marker},
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

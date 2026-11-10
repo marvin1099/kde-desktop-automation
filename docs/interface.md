@@ -1,4 +1,4 @@
-# KDE Desktop Automation — interface proposal
+# KDE Desktop Automation — interface and design
 
 ## Goal
 

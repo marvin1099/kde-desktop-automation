@@ -1,4 +1,4 @@
-# Composing GUI automation scripts
+# Composing KDE desktop automation scripts
 
 `kde-desktop` is a set of target-explicit CLI building blocks. Bash (or another
 script) can combine window discovery, bounded waits, inspection, input, and
@@ -111,7 +111,7 @@ exec "${timer[@]}"
 
 For continuous monitoring, stale-window recovery, repeated bounded waits, and
 a recheck of borderless display coverage, see the runnable
-[`start-timer-on-fullscreen.sh`](start-timer-on-fullscreen.sh). Pass
+[`start-timer-on-fullscreen.sh`](../examples/start-timer-on-fullscreen.sh). Pass
 `user-desktop` only when intentionally selecting the live desktop; the wrapper
 requires the target explicitly and invokes the timer without evaluating its
 arguments.

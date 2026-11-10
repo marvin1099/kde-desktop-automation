@@ -89,9 +89,8 @@ class RuntimePaths:
         else:
             state_home = Path.home() / ".local" / "state"
 
-        # Keep these locations stable so a product rename does not orphan local sessions.
-        app_runtime = runtime_dir / "kde-interaction"
-        app_state = state_home / "kde-interaction"
+        app_runtime = runtime_dir / "kde-desktop-automation"
+        app_state = state_home / "kde-desktop-automation"
         runtime_sessions = app_runtime / "sessions"
         state_sessions = app_state / "sessions"
         homes = app_state / "homes"

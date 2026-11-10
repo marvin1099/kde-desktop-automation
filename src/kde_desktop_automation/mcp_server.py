@@ -59,14 +59,31 @@ ManagerFactory = Callable[[], SessionManager]
 TargetSession = Annotated[
     str,
     Field(
+        min_length=12,
+        max_length=18,
+        pattern=r"^(?:user-desktop|agent-[0-9a-f]{12})$",
         description=(
             "Required target selector: a managed private session ID, or the exact value "
             "'user-desktop' to explicitly opt into the real user desktop."
-        )
+        ),
     ),
 ]
+PrivateSessionId = Annotated[
+    str,
+    Field(
+        min_length=18,
+        max_length=18,
+        pattern=r"^agent-[0-9a-f]{12}$",
+        description=(
+            "Managed private session ID returned by kde_session_create or kde_session_list."
+        ),
+    ),
+]
+WindowId = Annotated[str, Field(min_length=1, max_length=64)]
+Selector = Annotated[str, Field(min_length=1, max_length=512)]
 MediaAction = Literal["play", "pause", "play-pause", "stop", "next", "previous", "seek"]
 AudioDirection = Literal["sink", "source"]
+LiveDesktopTarget = Literal["user-desktop"]
 
 
 def _default_manager() -> SessionManager:
@@ -131,9 +148,9 @@ def create_mcp_server(
         structured_output=False,
     )
     def session_create(
-        name: str = "agent",
-        width: int = 1280,
-        height: int = 800,
+        name: Annotated[str, Field(min_length=1, max_length=128)] = "agent",
+        width: Annotated[int, Field(ge=320, le=7680)] = 1280,
+        height: Annotated[int, Field(ge=240, le=4320)] = 800,
         make_default: bool = False,
     ) -> CallToolResult:
         """Create a private desktop. The first session becomes default unless one already exists."""
@@ -156,7 +173,7 @@ def create_mcp_server(
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
         structured_output=False,
     )
-    def session_show(session_id: str) -> CallToolResult:
+    def session_show(session_id: PrivateSessionId) -> CallToolResult:
         """Return status, isolation details, and capabilities for a private session."""
         return _invoke(lambda: manager_factory().get_session(session_id))
 
@@ -171,7 +188,7 @@ def create_mcp_server(
         ),
         structured_output=False,
     )
-    def session_use(session_id: str) -> CallToolResult:
+    def session_use(session_id: PrivateSessionId) -> CallToolResult:
         """Select a running private session as the default; cannot select user-desktop."""
         return _invoke(lambda: manager_factory().set_default_session(session_id))
 
@@ -185,7 +202,7 @@ def create_mcp_server(
         annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True),
         structured_output=False,
     )
-    def session_stop(session_id: str) -> CallToolResult:
+    def session_stop(session_id: PrivateSessionId) -> CallToolResult:
         """Stop only the named private KWin session; its applications will be terminated."""
         return _invoke(lambda: _stop_private_session(manager_factory(), session_id))
 
@@ -198,7 +215,13 @@ def create_mcp_server(
         annotations=ToolAnnotations(destructiveHint=False, openWorldHint=True),
         structured_output=False,
     )
-    def session_launch(session_id: str, argv: list[str]) -> CallToolResult:
+    def session_launch(
+        session_id: PrivateSessionId,
+        argv: Annotated[
+            list[Annotated[str, Field(min_length=1, max_length=4096)]],
+            Field(min_length=1, max_length=128),
+        ],
+    ) -> CallToolResult:
         """Launch a process in a private session.
 
         argv[0] is the executable; shell parsing is not performed.
@@ -226,8 +249,8 @@ def create_mcp_server(
     )
     def window_find(
         session: TargetSession,
-        app_id: str | None = None,
-        title: str | None = None,
+        app_id: Annotated[str | None, Field(min_length=1, max_length=512)] = None,
+        title: Annotated[str | None, Field(min_length=1, max_length=512)] = None,
     ) -> CallToolResult:
         """Find one window. app_id is exact; title is a case-insensitive substring."""
         return _invoke(lambda: desktop_operations(session).window_find(app_id=app_id, title=title))
@@ -243,9 +266,9 @@ def create_mcp_server(
     )
     def window_wait(
         session: TargetSession,
-        app_id: str | None = None,
-        title: str | None = None,
-        timeout: float = 10.0,
+        app_id: Annotated[str | None, Field(min_length=1, max_length=512)] = None,
+        title: Annotated[str | None, Field(min_length=1, max_length=512)] = None,
+        timeout: Annotated[float, Field(ge=0.1, le=60.0)] = 10.0,
         fullscreen: bool = False,
         fills_display: bool = False,
     ) -> CallToolResult:
@@ -266,7 +289,7 @@ def create_mcp_server(
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
         structured_output=False,
     )
-    def window_inspect(session: TargetSession, window_id: str) -> CallToolResult:
+    def window_inspect(session: TargetSession, window_id: WindowId) -> CallToolResult:
         """Inspect a target window's state, geometry, app ID, and title."""
         return _invoke(lambda: desktop_operations(session).window_inspect(window_id))
 
@@ -276,7 +299,7 @@ def create_mcp_server(
         annotations=ToolAnnotations(destructiveHint=False, openWorldHint=True),
         structured_output=False,
     )
-    def window_activate(session: TargetSession, window_id: str) -> CallToolResult:
+    def window_activate(session: TargetSession, window_id: WindowId) -> CallToolResult:
         """Activate by session-scoped UUID; live activation may switch desktops and move focus."""
         return _invoke(lambda: desktop_operations(session).window_activate(window_id))
 
@@ -286,7 +309,11 @@ def create_mcp_server(
         annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True),
         structured_output=False,
     )
-    def input_key(session: TargetSession, window_id: str, chord: str) -> CallToolResult:
+    def input_key(
+        session: TargetSession,
+        window_id: WindowId,
+        chord: Annotated[str, Field(min_length=1, max_length=128)],
+    ) -> CallToolResult:
         """Submit a key chord (for example CTRL+S) to the named, already-active window."""
         return _invoke(lambda: desktop_operations(session).input_key(window_id, chord))
 
@@ -298,7 +325,11 @@ def create_mcp_server(
         annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True),
         structured_output=False,
     )
-    def input_type(session: TargetSession, window_id: str, text: str) -> CallToolResult:
+    def input_type(
+        session: TargetSession,
+        window_id: WindowId,
+        text: Annotated[str, Field(max_length=4096)],
+    ) -> CallToolResult:
         """Submit literal text to the named, already-active window."""
         return _invoke(lambda: desktop_operations(session).input_type(window_id, text))
 
@@ -312,10 +343,10 @@ def create_mcp_server(
     )
     def input_click(
         session: TargetSession,
-        window_id: str,
-        x: float,
-        y: float,
-        button: str = "left",
+        window_id: WindowId,
+        x: Annotated[float, Field(ge=0.0, le=1.0)],
+        y: Annotated[float, Field(ge=0.0, le=1.0)],
+        button: Literal["left", "middle", "right"] = "left",
     ) -> CallToolResult:
         """Click normalized window-relative coordinates; the target must already be active."""
         return _invoke(
@@ -356,7 +387,7 @@ def create_mcp_server(
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
         structured_output=False,
     )
-    def media_inspect(session: TargetSession, player: str) -> CallToolResult:
+    def media_inspect(session: TargetSession, player: Selector) -> CallToolResult:
         """Inspect metadata and playback position for one exact listed player."""
         return _invoke(lambda: desktop_operations(session).media_inspect(player))
 
@@ -371,9 +402,9 @@ def create_mcp_server(
     )
     def media_control(
         session: TargetSession,
-        player: str,
+        player: Selector,
         action: MediaAction,
-        seconds: float | None = None,
+        seconds: Annotated[float | None, Field(ge=-86_400.0, le=86_400.0)] = None,
     ) -> CallToolResult:
         """Send a typed transport request; seconds is required only for seek."""
         return _invoke(
@@ -393,7 +424,7 @@ def create_mcp_server(
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
         structured_output=False,
     )
-    def audio_list(session: TargetSession) -> CallToolResult:
+    def audio_list(session: LiveDesktopTarget) -> CallToolResult:
         """Inspect live-user PipeWire audio devices and active output streams."""
         return _invoke(lambda: desktop_operations(session).audio_list())
 
@@ -404,9 +435,9 @@ def create_mcp_server(
         structured_output=False,
     )
     def audio_set_default(
-        session: TargetSession,
+        session: LiveDesktopTarget,
         direction: AudioDirection,
-        device_name: str,
+        device_name: Selector,
     ) -> CallToolResult:
         """Set an exact listed sink/source as default; only for user-desktop."""
         return _invoke(
@@ -420,10 +451,10 @@ def create_mcp_server(
         structured_output=False,
     )
     def audio_set_volume(
-        session: TargetSession,
+        session: LiveDesktopTarget,
         direction: AudioDirection,
-        device_name: str,
-        volume_percent: float,
+        device_name: Selector,
+        volume_percent: Annotated[float, Field(ge=0.0, le=100.0)],
     ) -> CallToolResult:
         """Set the absolute percentage on one exact listed sink/source."""
         return _invoke(
@@ -441,9 +472,9 @@ def create_mcp_server(
         structured_output=False,
     )
     def audio_set_mute(
-        session: TargetSession,
+        session: LiveDesktopTarget,
         direction: AudioDirection,
-        device_name: str,
+        device_name: Selector,
         muted: bool,
     ) -> CallToolResult:
         """Set a boolean mute state; toggling is deliberately not exposed."""
@@ -461,11 +492,11 @@ def create_mcp_server(
         structured_output=False,
     )
     def audio_route_stream(
-        session: TargetSession,
-        stream_id: int,
-        sink_name: str,
-        application_name: str,
-        process_id: int | None = None,
+        session: LiveDesktopTarget,
+        stream_id: Annotated[int, Field(ge=0)],
+        sink_name: Selector,
+        application_name: Selector,
+        process_id: Annotated[int | None, Field(gt=0)] = None,
     ) -> CallToolResult:
         """Move only the selected sink-input; optional PID further guards identity."""
         return _invoke(

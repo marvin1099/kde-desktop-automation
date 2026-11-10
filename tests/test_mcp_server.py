@@ -170,6 +170,10 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
             assert "session" in tool.inputSchema.get("required", []), tool.name
     wait_tool = next(tool for tool in tools if tool.name == "kde_window_wait")
     assert {"session", "fullscreen", "fills_display"} <= set(wait_tool.inputSchema["properties"])
+    target_schema = wait_tool.inputSchema["properties"]["session"]
+    assert target_schema["pattern"] == r"^(?:user-desktop|agent-[0-9a-f]{12})$"
+    assert wait_tool.inputSchema["properties"]["timeout"]["minimum"] == 0.1
+    assert wait_tool.inputSchema["properties"]["timeout"]["maximum"] == 60.0
     media_control_tool = next(tool for tool in tools if tool.name == "kde_media_control")
     assert {"session", "player", "action", "seconds"} <= set(
         media_control_tool.inputSchema["properties"]
@@ -188,6 +192,25 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         audio_mute_tool.inputSchema["properties"]
     )
     assert audio_mute_tool.inputSchema["properties"]["direction"]["enum"] == ["sink", "source"]
+    audio_list_tool = next(tool for tool in tools if tool.name == "kde_audio_list")
+    assert audio_list_tool.inputSchema["properties"]["session"]["const"] == "user-desktop"
+    volume_tool = next(tool for tool in tools if tool.name == "kde_audio_set_volume")
+    assert volume_tool.inputSchema["properties"]["volume_percent"]["minimum"] == 0.0
+    assert volume_tool.inputSchema["properties"]["volume_percent"]["maximum"] == 100.0
+    click_tool = next(tool for tool in tools if tool.name == "kde_input_click")
+    assert click_tool.inputSchema["properties"]["x"]["minimum"] == 0.0
+    assert click_tool.inputSchema["properties"]["x"]["maximum"] == 1.0
+    text_tool = next(tool for tool in tools if tool.name == "kde_input_type")
+    assert text_tool.inputSchema["properties"]["text"]["maxLength"] == 4096
+    create_tool = next(tool for tool in tools if tool.name == "kde_session_create")
+    assert create_tool.inputSchema["properties"]["width"]["minimum"] == 320
+    assert create_tool.inputSchema["properties"]["width"]["maximum"] == 7680
+    launch_tool = next(tool for tool in tools if tool.name == "kde_session_launch")
+    assert launch_tool.inputSchema["properties"]["argv"]["minItems"] == 1
+    assert launch_tool.inputSchema["properties"]["argv"]["maxItems"] == 128
+    route_tool = next(tool for tool in tools if tool.name == "kde_audio_route_stream")
+    assert route_tool.inputSchema["properties"]["stream_id"]["minimum"] == 0
+    assert route_tool.inputSchema["properties"]["process_id"]["anyOf"][0]["exclusiveMinimum"] == 0
 
 
 def test_mcp_routes_real_desktop_only_when_explicitly_selected() -> None:

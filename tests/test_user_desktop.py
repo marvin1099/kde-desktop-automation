@@ -125,6 +125,24 @@ def test_live_desktop_environment_rejects_private_sessions(tmp_path: Path) -> No
     )
 
 
+def test_live_desktop_environment_rejects_private_session_runtime_path(
+    tmp_path: Path,
+) -> None:
+    environment = _desktop_environment(tmp_path)
+    private_runtime = "/run/user/1000/kde-desktop-automation/sessions/agent-123456789abc"
+
+    assert (
+        user_desktop.user_desktop_environment_issue(
+            environment
+            | {
+                "XDG_RUNTIME_DIR": private_runtime,
+                "DBUS_SESSION_BUS_ADDRESS": f"unix:path={private_runtime}/bus",
+            }
+        )
+        == "The current environment points to a managed private session, not the user desktop."
+    )
+
+
 def test_window_id_parser_normalizes_braces_and_rejects_arbitrary_values() -> None:
     assert user_desktop._parse_window_ids(f"{{{WINDOW_ID.upper()}}}\n{WINDOW_ID}\n") == [WINDOW_ID]
     with pytest.raises(InteractionError, match="UUIDs"):
