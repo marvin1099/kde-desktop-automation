@@ -231,16 +231,43 @@ bash examples/start-timer-on-fullscreen.sh \
 ```
 
 Choose `fullscreen` for KWin's explicit state or `fills-display` for borderless
-geometry. A video automation script that must identify an actively playing
-media session or read its playhead still needs a player/MPRIS interface; this
-window API does not infer playback from fullscreen alone.
+geometry. Fullscreen detection remains a window predicate; use the media
+commands below when a workflow also needs playback state or track position.
+
+#### MPRIS media players
+
+Media commands discover and control MPRIS players on the selected session's
+D-Bus, so private sessions and the live desktop do not share player targets.
+They require `playerctl` (`doctor --json` reports whether it is installed).
+List players first, then pass one exact name from that result to inspect or
+control; the API never silently chooses the first player:
+
+```bash
+# Use --session user-desktop only to inspect/control players on the live desktop.
+kde-ai --session user-desktop media list --json
+
+# Replace this with one exact name returned by media list.
+PLAYER='firefox.instance123'
+kde-ai --session user-desktop media inspect "$PLAYER" --json
+
+# Typed transport controls; seek is a relative offset in seconds (negative rewinds).
+kde-ai --session user-desktop media control "$PLAYER" pause --json
+kde-ai --session user-desktop media control "$PLAYER" seek --seconds -15 --json
+```
+
+Inspection returns playback status, available title/artist/album metadata,
+current position, and duration in seconds. Players may omit metadata or position;
+those fields are `null`. MPRIS control reports that a request was submitted, not
+that playback changed. `playerctl` names that would match multiple player
+instances are rejected; use an exact listed instance name. Media volume and
+PipeWire device/routing controls are not part of this interface yet.
 
 ### MCP server
 
-The stdio MCP server exposes the same window, input, display, screenshot, and
-capability operations, plus private-session lifecycle tools. Install the project
-with `uv sync`, then configure your MCP client to launch `kde-ai-mcp` from this
-checkout:
+The stdio MCP server exposes the same window, input, display, MPRIS media,
+screenshot, and capability operations, plus private-session lifecycle tools.
+Install the project with `uv sync`, then configure your MCP client to launch
+`kde-ai-mcp` from this checkout:
 
 ```json
 {

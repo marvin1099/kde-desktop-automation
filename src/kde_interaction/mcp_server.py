@@ -6,7 +6,7 @@ import logging
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, ImageContent, TextContent, ToolAnnotations
@@ -43,7 +43,10 @@ clients sharing this server share the Unix user's authority over managed private
 sessions, including the ability to list and stop them. `kde_session_use` changes
 a persisted CLI default but does not affect MCP desktop calls, which always
 require an explicit selector. Use session lifecycle tools only through a
-coordinator authorized to manage the selected session.
+coordinator authorized to manage the selected session. Media tools query the
+selected session's MPRIS bus and can reveal its current media metadata; player
+names must be selected explicitly. A successful player-control call reports the
+request submission, not verified playback effect.
 """
 
 OperationsFactory = Callable[[str], DesktopOperations]
@@ -57,6 +60,7 @@ TargetSession = Annotated[
         )
     ),
 ]
+MediaAction = Literal["play", "pause", "play-pause", "stop", "next", "previous", "seek"]
 
 
 def _default_manager() -> SessionManager:
@@ -326,6 +330,53 @@ def create_mcp_server(
     def display_list(session: TargetSession) -> CallToolResult:
         """List displays and coordinate spaces for the selected session."""
         return _invoke(lambda: desktop_operations(session).display_list())
+
+    @server.tool(
+        name="kde_media_list",
+        description="List MPRIS players registered on the selected session's D-Bus.",
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+        structured_output=False,
+    )
+    def media_list(session: TargetSession) -> CallToolResult:
+        """List exact MPRIS player names available in one target session."""
+        return _invoke(lambda: desktop_operations(session).media_players())
+
+    @server.tool(
+        name="kde_media_inspect",
+        description=(
+            "Read playback status, title/artist/album, current position, and duration "
+            "from one explicitly selected MPRIS player."
+        ),
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+        structured_output=False,
+    )
+    def media_inspect(session: TargetSession, player: str) -> CallToolResult:
+        """Inspect metadata and playback position for one exact listed player."""
+        return _invoke(lambda: desktop_operations(session).media_inspect(player))
+
+    @server.tool(
+        name="kde_media_control",
+        description=(
+            "Submit play, pause, play-pause, stop, next, previous, or relative seek "
+            "to one explicitly selected MPRIS player."
+        ),
+        annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True),
+        structured_output=False,
+    )
+    def media_control(
+        session: TargetSession,
+        player: str,
+        action: MediaAction,
+        seconds: float | None = None,
+    ) -> CallToolResult:
+        """Send a typed transport request; seconds is required only for seek."""
+        return _invoke(
+            lambda: desktop_operations(session).media_control(
+                player,
+                action,
+                seconds=seconds,
+            )
+        )
 
     @server.tool(
         name="kde_capabilities",

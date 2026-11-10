@@ -341,6 +341,9 @@ class UserDesktopBackend:
                 "input.focus_guard": click_available,
                 "input.window_targeted": click_available,
                 "input.effect_ack": False,
+                "media.players": shutil.which("playerctl") is not None,
+                "media.inspect": shutil.which("playerctl") is not None,
+                "media.control": shutil.which("playerctl") is not None,
             },
             "input_protocol_version": version,
             "input_semantics": {

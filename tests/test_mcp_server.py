@@ -31,6 +31,26 @@ class FakeOperations:
             )
         return {"target": {"kind": self.session}}
 
+    def media_players(self) -> dict[str, Any]:
+        return {"target": {"kind": self.session}, "players": [{"name": "vlc"}]}
+
+    def media_inspect(self, player: str) -> dict[str, Any]:
+        return {"target": {"kind": self.session}, "player": player}
+
+    def media_control(
+        self,
+        player: str,
+        action: str,
+        *,
+        seconds: float | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "target": {"kind": self.session},
+            "player": player,
+            "action": action,
+            "seconds": seconds,
+        }
+
     def screenshot(self, output: Path, *, overwrite: bool = False) -> dict[str, Any]:
         del overwrite
         output.write_bytes(self.screenshot_png)
@@ -61,6 +81,9 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         "kde_input_type",
         "kde_input_click",
         "kde_display_list",
+        "kde_media_list",
+        "kde_media_inspect",
+        "kde_media_control",
         "kde_screenshot",
         "kde_capabilities",
     } <= names
@@ -83,6 +106,9 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         "kde_input_type",
         "kde_input_click",
         "kde_display_list",
+        "kde_media_list",
+        "kde_media_inspect",
+        "kde_media_control",
         "kde_screenshot",
         "kde_capabilities",
     }
@@ -91,6 +117,19 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
             assert "session" in tool.inputSchema.get("required", []), tool.name
     wait_tool = next(tool for tool in tools if tool.name == "kde_window_wait")
     assert {"session", "fullscreen", "fills_display"} <= set(wait_tool.inputSchema["properties"])
+    media_control_tool = next(tool for tool in tools if tool.name == "kde_media_control")
+    assert {"session", "player", "action", "seconds"} <= set(
+        media_control_tool.inputSchema["properties"]
+    )
+    assert media_control_tool.inputSchema["properties"]["action"]["enum"] == [
+        "play",
+        "pause",
+        "play-pause",
+        "stop",
+        "next",
+        "previous",
+        "seek",
+    ]
 
 
 def test_mcp_routes_real_desktop_only_when_explicitly_selected() -> None:
@@ -120,6 +159,33 @@ def test_mcp_routes_explicit_private_session_id_without_default_lookup() -> None
         "schema_version": "1",
         "ok": True,
         "data": {"target": {"kind": session_id}},
+    }
+    assert FakeOperations.selected_sessions == [session_id]
+
+
+def test_mcp_media_control_requires_and_uses_explicit_session() -> None:
+    server = _server()
+    session_id = "agent-123456789abc"
+
+    result = asyncio.run(
+        server.call_tool(
+            "kde_media_control",
+            {
+                "session": session_id,
+                "player": "vlc",
+                "action": "seek",
+                "seconds": -15.0,
+            },
+        )
+    )
+
+    assert isinstance(result, CallToolResult)
+    assert result.isError is False
+    assert result.structuredContent["data"] == {
+        "target": {"kind": session_id},
+        "player": "vlc",
+        "action": "seek",
+        "seconds": -15.0,
     }
     assert FakeOperations.selected_sessions == [session_id]
 
@@ -154,6 +220,7 @@ def test_mcp_instructions_state_live_desktop_safety() -> None:
     assert "Never infer or substitute the live desktop" in instructions
     assert "not per-client authorization tokens" in instructions
     assert "kde_session_use" in instructions
+    assert "player names must be selected explicitly" in instructions
 
 
 def test_mcp_session_selector_is_not_implicit_for_any_server_mode() -> None:

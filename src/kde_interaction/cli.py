@@ -39,12 +39,16 @@ window_app = typer.Typer(
 )
 input_app = typer.Typer(help="Send input to an explicitly selected window.", no_args_is_help=True)
 display_app = typer.Typer(help="Inspect displays in the selected session.", no_args_is_help=True)
+media_app = typer.Typer(
+    help="Inspect and control MPRIS media players in the selected session.", no_args_is_help=True
+)
 app.add_typer(user_desktop_app, name="user-desktop")
 user_desktop_app.add_typer(user_window_app, name="window")
 user_desktop_app.add_typer(user_input_app, name="input")
 app.add_typer(window_app, name="window")
 app.add_typer(input_app, name="input")
 app.add_typer(display_app, name="display")
+app.add_typer(media_app, name="media")
 
 console = Console()
 
@@ -340,6 +344,47 @@ def list_displays(
 ) -> None:
     """List logical displays for the selected session."""
     _run(lambda: (_operations(ctx).display_list(), []), json_output=json_output)
+
+
+@media_app.command("list")
+def list_media_players(
+    ctx: Context,
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """List MPRIS players registered on the selected session's D-Bus."""
+    _run(lambda: (_operations(ctx).media_players(), []), json_output=json_output)
+
+
+@media_app.command("inspect")
+def inspect_media_player(
+    ctx: Context,
+    player: str = typer.Argument(..., help="Exact player name returned by media list."),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Read playback status, track metadata, position, and duration for one player."""
+    _run(lambda: (_operations(ctx).media_inspect(player), []), json_output=json_output)
+
+
+@media_app.command("control")
+def control_media_player(
+    ctx: Context,
+    player: str = typer.Argument(..., help="Exact player name returned by media list."),
+    action: str = typer.Argument(
+        ...,
+        help="play, pause, play-pause, stop, next, previous, or seek.",
+    ),
+    seconds: float | None = typer.Option(
+        None,
+        "--seconds",
+        help="Relative seek offset; required for seek, in seconds (negative rewinds).",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Submit one typed MPRIS transport request to one exact player."""
+    _run(
+        lambda: (_operations(ctx).media_control(player, action, seconds=seconds), []),
+        json_output=json_output,
+    )
 
 
 @app.command("screenshot")

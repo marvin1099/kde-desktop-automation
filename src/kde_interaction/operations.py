@@ -7,9 +7,11 @@ from math import isfinite
 from pathlib import Path
 from typing import Any, cast
 
+from kde_interaction.backends.media_players import MprisBackend
 from kde_interaction.backends.user_desktop import UserDesktopBackend
 from kde_interaction.errors import InteractionError
 from kde_interaction.paths import RuntimePaths
+from kde_interaction.process import find_executable
 from kde_interaction.sessions import SessionManager
 
 USER_DESKTOP = "user-desktop"
@@ -220,8 +222,11 @@ class DesktopOperations:
         )
 
     def capabilities(self) -> dict[str, Any]:
+        media_capabilities = _media_capabilities()
         if self._user_desktop is not None:
-            return self._user_desktop.capabilities()
+            result = self._user_desktop.capabilities()
+            result["capabilities"] = result["capabilities"] | media_capabilities
+            return result
         session = self._private_manager().get_session(self._private_session_id())
         if session["status"] != "running":
             raise InteractionError(
@@ -231,11 +236,35 @@ class DesktopOperations:
             )
         return {
             "target": {"kind": "agent-session", "session_id": self._private_session_id()},
-            "capabilities": session["capabilities"],
+            "capabilities": session["capabilities"] | media_capabilities,
             "window_management_protocol_version": session["window_management_protocol_version"],
             "input_protocol_version": session["input_protocol_version"],
-            "limitations": session["limitations"],
+            "limitations": [
+                *session["limitations"],
+                "MPRIS uses playerctl on the selected session bus; "
+                "player availability is checked per call",
+            ],
         }
+
+    def media_players(self) -> dict[str, Any]:
+        return self._media_backend().list_players(target=self._target())
+
+    def media_inspect(self, player: str) -> dict[str, Any]:
+        return self._media_backend().inspect_player(player, target=self._target())
+
+    def media_control(
+        self,
+        player: str,
+        action: str,
+        *,
+        seconds: float | None = None,
+    ) -> dict[str, Any]:
+        return self._media_backend().control_player(
+            player,
+            action,
+            target=self._target(),
+            seconds=seconds,
+        )
 
     def _private_manager(self) -> SessionManager:
         if self._manager is None:
@@ -246,6 +275,18 @@ class DesktopOperations:
         if self._session_id is None:
             raise InteractionError("invalid_target", "No managed private session is selected.")
         return self._session_id
+
+    def _media_backend(self) -> MprisBackend:
+        if self._user_desktop is not None:
+            environ = self._user_desktop.environ
+        else:
+            environ = self._private_manager().runtime_environment(self._private_session_id())
+        return MprisBackend(environ)
+
+    def _target(self) -> dict[str, str]:
+        if self._user_desktop is not None:
+            return {"kind": USER_DESKTOP}
+        return {"kind": "agent-session", "session_id": self._private_session_id()}
 
 
 def _displays_covered_by_window(
@@ -299,3 +340,12 @@ def _is_finite_number(value: Any) -> bool:
         return isfinite(float(value))
     except (OverflowError, ValueError):
         return False
+
+
+def _media_capabilities() -> dict[str, bool]:
+    available = find_executable("playerctl") is not None
+    return {
+        "media.players": available,
+        "media.inspect": available,
+        "media.control": available,
+    }

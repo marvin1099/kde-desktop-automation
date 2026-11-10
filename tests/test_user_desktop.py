@@ -355,6 +355,8 @@ def test_live_capabilities_probe_window_service_and_report_focus_routing(
     assert result["capabilities"]["input.key"] is True
     assert result["capabilities"]["input.focus_guard"] is True
     assert result["capabilities"]["input.window_targeted"] is True
+    assert result["capabilities"]["media.players"] is True
+    assert result["capabilities"]["media.control"] is True
     assert result["input_semantics"]["atomic_window_routing"] is False
     assert result["window_reason"] is None
 

@@ -18,6 +18,88 @@ def test_doctor_json_requires_explicit_user_desktop_commands() -> None:
     assert report["data"]["safety"]["explicit_user_desktop_command_required"] is True
     assert report["data"]["agent_session"]["input.inject"] is False
     assert report["data"]["agent_session"]["input.effect_ack"] is False
+    assert "playerctl" in report["data"]["tools"]
+
+
+def test_media_control_cli_passes_explicit_player_action_and_seek_offset(monkeypatch) -> None:
+    calls = []
+
+    class FakeOperations:
+        def __init__(self, session, **_kwargs):
+            self.session = session
+
+        def media_control(self, player, action, *, seconds=None):
+            calls.append((self.session, player, action, seconds))
+            return {
+                "target": {"kind": self.session},
+                "player": player,
+                "action": action,
+                "seconds": seconds,
+            }
+
+    monkeypatch.setattr("kde_interaction.cli.DesktopOperations", FakeOperations)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--session",
+            "user-desktop",
+            "media",
+            "control",
+            "spotify",
+            "seek",
+            "--seconds",
+            "-15",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [("user-desktop", "spotify", "seek", -15.0)]
+    assert json.loads(result.stdout)["data"]["seconds"] == -15.0
+
+
+def test_media_list_and_inspect_cli_return_json_for_selected_target(monkeypatch) -> None:
+    calls = []
+
+    class FakeOperations:
+        def __init__(self, session, **_kwargs):
+            self.session = session
+
+        def media_players(self):
+            calls.append((self.session, "list"))
+            return {"target": {"kind": self.session}, "players": [{"name": "vlc"}]}
+
+        def media_inspect(self, player):
+            calls.append((self.session, "inspect", player))
+            return {"target": {"kind": self.session}, "player": player, "position_seconds": 3.5}
+
+    monkeypatch.setattr("kde_interaction.cli.DesktopOperations", FakeOperations)
+    runner = CliRunner()
+
+    listing = runner.invoke(
+        app,
+        ["--session", "agent-123456789abc", "media", "list", "--json"],
+    )
+    inspected = runner.invoke(
+        app,
+        [
+            "--session",
+            "agent-123456789abc",
+            "media",
+            "inspect",
+            "vlc",
+            "--json",
+        ],
+    )
+
+    assert listing.exit_code == 0
+    assert inspected.exit_code == 0
+    assert calls == [
+        ("agent-123456789abc", "list"),
+        ("agent-123456789abc", "inspect", "vlc"),
+    ]
+    assert json.loads(inspected.stdout)["data"]["position_seconds"] == 3.5
 
 
 def test_session_list_json_is_empty_without_starting_a_session(tmp_path, monkeypatch) -> None:

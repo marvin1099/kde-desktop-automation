@@ -53,13 +53,20 @@ IDs are not authorization tokens: clients under one server share the same
 Unix-user authority over session lifecycle.
 
 The current shared subset includes window list/find/wait/inspect/activate,
-targeted key/text/normalized click input, display list, screenshots, and per-target
-capability reports. The current launch commands accept executable argument
-vectors (never shell strings) and are not security boundaries; a future
-user-facing launcher should prefer validated desktop-entry IDs. Both backends'
-input remains best-effort: KWin gives no application-delivery acknowledgement,
-so verify effects independently. X11, accessibility targets, and semantic
-app-level actions remain unimplemented.
+targeted key/text/normalized click input, display list, screenshots, per-target
+capability reports, and MPRIS player list/inspect/control. Media operations use
+the selected target's D-Bus session and exact player names; they require
+`playerctl` and do not infer a player when several are present. The current
+launch commands accept executable argument vectors (never shell strings) and
+are not security boundaries; a future user-facing launcher should prefer
+validated desktop-entry IDs. Both backends' input remains best-effort: KWin
+gives no application-delivery acknowledgement, so verify effects independently.
+X11, accessibility targets, and semantic app-level actions remain unimplemented.
+
+MPRIS inspection returns playback status, available title/artist/album, current
+position, and duration. Missing optional metadata is `null`; controls report
+request submission, not verified playback effect. Player volume, PipeWire
+device selection, and per-application audio routing are not implemented.
 
 Targeted input currently means **active-window guarded**, not compositor-atomic
 per-window routing. The input capability/result reports that focus can change
@@ -505,8 +512,9 @@ also be layered above screenshots without changing window/display semantics.
 The stdio server exposes typed tools over `DesktopOperations`: `kde_window_list`,
 `kde_window_find`, `kde_window_wait`, `kde_window_inspect`,
 `kde_window_activate`, `kde_input_key`, `kde_input_type`, `kde_input_click`,
-`kde_display_list`, `kde_screenshot`, and `kde_capabilities`. Private lifecycle
-tools cover list/create/show/use/stop/launch. Every MCP desktop tool requires a
+`kde_display_list`, `kde_media_list`, `kde_media_inspect`, `kde_media_control`,
+`kde_screenshot`, and `kde_capabilities`. Private lifecycle tools cover
+list/create/show/use/stop/launch. Every MCP desktop tool requires a
 `session` field containing a managed ID or explicit `user-desktop`; CLI defaults
 do not apply. `kde_session_use` changes only the persisted CLI default. The
 server instructions repeat the selector rule and shared-UID lifecycle trust
@@ -687,14 +695,13 @@ identified in plans and results.
 These are future, capability-conditional adapters—not part of the current
 prototype or required for the core desktop interface:
 
-- **PipeWire:** explore typed audio-device/routing operations and, where the
-  installed portals and policy support it, audio or camera/video capture.
-  Microphone and camera use must be explicit, visibly reported, and subject to
-  the platform's permission flow; never infer that capture is available merely
-  because PipeWire is installed.
-- **`playerctl`:** optionally inspect supported players and expose current
-  metadata plus transport controls (play/pause, next, previous, seek). If more
-  than one player is available, require or return an explicit player target.
+- **PipeWire:** add typed device/default/volume/mute operations and explicit
+  per-application stream routing. Enumerate available sinks, sources, and active
+  application streams first; reject ambiguous PID/app-name matches; report the
+  effective result. These operations affect live user audio and must always use
+  an explicit live target. Microphone/camera capture remains a separate,
+  permission-gated capability; PipeWire being installed does not imply that
+  capture is authorized.
 - **Plasma settings:** add narrowly scoped, typed settings operations only where
   a supported API exists. Report the effective value, provide dry-run and
   restoration where practical, and do not expose arbitrary shell or raw config

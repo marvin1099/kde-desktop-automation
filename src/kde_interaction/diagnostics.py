@@ -17,6 +17,7 @@ _TOOLS = (
     "kdotool",
     "dotool",
     "kdocktor",
+    "playerctl",
 )
 
 

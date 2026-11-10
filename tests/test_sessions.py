@@ -58,6 +58,9 @@ class FakeBackend:
         self.running.discard(session.session_id)
         return []
 
+    def environment(self, session: SessionRecord) -> dict[str, str]:
+        return {"DBUS_SESSION_BUS_ADDRESS": session.dbus_address}
+
     def displays(self, session: SessionRecord) -> list[DisplayInfo]:
         return [DisplayInfo("Virtual-0", 0, 0, session.width, session.height, 1.0, "normal", 60.0)]
 
@@ -129,6 +132,18 @@ def test_session_lifecycle_is_scoped_to_agent_session(manager: SessionManager) -
     assert not warnings
     assert stopped["status"] == "stopped"
     assert manager.list_sessions()[0]["status"] == "stopped"
+
+
+def test_runtime_environment_is_for_one_running_private_session(manager: SessionManager) -> None:
+    created = manager.create_agent_session("media", 640, 480)
+
+    environment = manager.runtime_environment(created.session_id)
+
+    assert environment == {"DBUS_SESSION_BUS_ADDRESS": "unix:path=/fake/bus"}
+    manager.stop(created.session_id)
+    with pytest.raises(InteractionError) as error:
+        manager.runtime_environment(created.session_id)
+    assert error.value.code == "session_not_running"
 
 
 def test_private_default_selection_is_explicit_and_does_not_follow_new_sessions(

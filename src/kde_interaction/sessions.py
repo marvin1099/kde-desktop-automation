@@ -35,6 +35,8 @@ class SessionBackend(Protocol):
 
     def stop(self, session: SessionRecord) -> list[str]: ...
 
+    def environment(self, session: SessionRecord) -> dict[str, str]: ...
+
     def displays(self, session: SessionRecord) -> list[DisplayInfo]: ...
 
     def screenshot(
@@ -344,6 +346,11 @@ class SessionManager:
 
     def get_session(self, session_id: str) -> dict[str, Any]:
         return self.public_record(self.store.load(session_id))
+
+    def runtime_environment(self, session_id: str) -> dict[str, str]:
+        """Return the selected running session's isolated process environment."""
+        record = self._require_running(session_id)
+        return self.backend.environment(record)
 
     def displays(self, session_id: str) -> list[dict[str, Any]]:
         record = self._require_running(session_id)
