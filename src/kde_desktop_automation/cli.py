@@ -10,15 +10,15 @@ from rich.console import Console
 from rich.table import Table
 from typer import Context
 
-from kde_interaction.backends.user_desktop import UserDesktopBackend
-from kde_interaction.diagnostics import build_doctor_report
-from kde_interaction.errors import InteractionError
-from kde_interaction.operations import DesktopOperations
-from kde_interaction.paths import RuntimePaths
-from kde_interaction.sessions import SessionManager
+from kde_desktop_automation.backends.user_desktop import UserDesktopBackend
+from kde_desktop_automation.diagnostics import build_doctor_report
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.operations import DesktopOperations
+from kde_desktop_automation.paths import RuntimePaths
+from kde_desktop_automation.sessions import SessionManager
 
 app = typer.Typer(
-    name="kde-ai",
+    name="kde-desktop",
     help="Inspect and operate KDE through explicit, session-scoped targets.",
     no_args_is_help=True,
     add_completion=False,
@@ -65,7 +65,7 @@ def configure_target(
         "--session",
         help=(
             "Target a private session ID or explicitly 'user-desktop'; overrides "
-            "KDE_AI_SESSION and the private default."
+            "KDE_DESKTOP_SESSION and the private default."
         ),
     ),
 ) -> None:

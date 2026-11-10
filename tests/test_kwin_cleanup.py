@@ -3,11 +3,11 @@ from urllib.parse import quote
 
 import pytest
 
-from kde_interaction.backends import kwin_virtual
-from kde_interaction.backends.kwin_virtual import KWinVirtualBackend, _remove_owned_runtime
-from kde_interaction.errors import InteractionError
-from kde_interaction.models import ProcessIdentity, SessionRecord
-from kde_interaction.paths import RuntimePaths
+from kde_desktop_automation.backends import kwin_virtual
+from kde_desktop_automation.backends.kwin_virtual import KWinVirtualBackend, _remove_owned_runtime
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.models import ProcessIdentity, SessionRecord
+from kde_desktop_automation.paths import RuntimePaths
 
 
 def test_runtime_cleanup_is_limited_to_session_directory(tmp_path) -> None:
@@ -68,7 +68,12 @@ def test_runtime_cleanup_rechecks_mounts_during_recursion(tmp_path, monkeypatch)
     assert mounted_data.read_text(encoding="utf-8") == "must not be removed after a late mount"
 
 
-def test_stop_preserves_runtime_if_process_identity_is_unverified(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("display_prefix", ["kde-desktop-", "kde-ai-"])
+def test_stop_preserves_runtime_if_process_identity_is_unverified(
+    tmp_path,
+    monkeypatch,
+    display_prefix: str,
+) -> None:
     host_runtime = tmp_path / "runtime"
     host_runtime.mkdir(mode=0o700)
     host_runtime.chmod(0o700)
@@ -82,7 +87,7 @@ def test_stop_preserves_runtime_if_process_identity_is_unverified(tmp_path, monk
     session_paths = paths.for_session(session_id, create=True)
     owned_marker = session_paths.runtime_dir / "keep-for-manual-cleanup"
     owned_marker.write_text("do not delete while process status is unknown", encoding="utf-8")
-    wayland_display = f"kde-ai-{session_id.removeprefix('agent-')}"
+    wayland_display = f"{display_prefix}{session_id.removeprefix('agent-')}"
     kwin_process = ProcessIdentity(
         pid=os.getpid(),
         start_ticks=123,
@@ -146,7 +151,7 @@ def test_stop_rejects_process_identities_from_another_session(tmp_path) -> None:
         pid=os.getpid(),
         start_ticks=123,
         executable="/usr/bin/kwin_wayland",
-        marker=f"kde-ai-{other_session.removeprefix('agent-')}",
+        marker=f"kde-desktop-{other_session.removeprefix('agent-')}",
         command=("/usr/bin/kwin_wayland", "--socket", other_session),
     )
     dbus_process = ProcessIdentity(
@@ -166,7 +171,7 @@ def test_stop_rejects_process_identities_from_another_session(tmp_path) -> None:
         height=768,
         runtime_dir=str(session_paths.runtime_dir),
         home_dir=str(session_paths.home_dir),
-        wayland_display=f"kde-ai-{session_id.removeprefix('agent-')}",
+        wayland_display=f"kde-desktop-{session_id.removeprefix('agent-')}",
         dbus_address=f"unix:path={session_paths.runtime_dir / 'bus'},guid={'a' * 32}",
         kwin_process=kwin_process,
         dbus_process=dbus_process,

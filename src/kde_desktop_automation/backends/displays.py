@@ -5,8 +5,8 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from kde_interaction.errors import InteractionError
-from kde_interaction.process import require_executable, require_success, run_command
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.process import require_executable, require_success, run_command
 
 
 @dataclass(frozen=True, slots=True)

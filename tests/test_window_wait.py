@@ -5,8 +5,8 @@ from typing import Any
 
 import pytest
 
-from kde_interaction.errors import InteractionError
-from kde_interaction.operations import DesktopOperations
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.operations import DesktopOperations
 
 SESSION_ID = "agent-123456789abc"
 WINDOW_ID = "b5ff2329-3976-4c31-bf31-1538cb97c8f0"
@@ -84,7 +84,7 @@ def test_window_wait_keeps_polling_until_unique_window_is_kde_fullscreen(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manager = FakeManager([_window(False), _window(True)])
-    monkeypatch.setattr("kde_interaction.operations.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("kde_desktop_automation.operations.time.sleep", lambda _seconds: None)
 
     result = _operations(manager).window_wait(
         app_id="org.example.Game",
@@ -108,7 +108,7 @@ def test_window_wait_tolerates_window_not_yet_appearing(
             _window(True),
         ]
     )
-    monkeypatch.setattr("kde_interaction.operations.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("kde_desktop_automation.operations.time.sleep", lambda _seconds: None)
 
     result = _operations(manager).window_wait(
         app_id="org.example.Game",
@@ -126,8 +126,8 @@ def test_window_wait_reports_last_non_fullscreen_observation_on_timeout(
 ) -> None:
     manager = FakeManager([_window(False)])
     ticks = iter((0.0, 0.0, 0.11))
-    monkeypatch.setattr("kde_interaction.operations.time.monotonic", lambda: next(ticks))
-    monkeypatch.setattr("kde_interaction.operations.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("kde_desktop_automation.operations.time.monotonic", lambda: next(ticks))
+    monkeypatch.setattr("kde_desktop_automation.operations.time.sleep", lambda _seconds: None)
 
     with pytest.raises(InteractionError) as error:
         _operations(manager).window_wait(
@@ -148,8 +148,8 @@ def test_unknown_fullscreen_state_does_not_satisfy_wait(
 ) -> None:
     manager = FakeManager([_window(None)])
     ticks = iter((0.0, 0.0, 0.11))
-    monkeypatch.setattr("kde_interaction.operations.time.monotonic", lambda: next(ticks))
-    monkeypatch.setattr("kde_interaction.operations.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("kde_desktop_automation.operations.time.monotonic", lambda: next(ticks))
+    monkeypatch.setattr("kde_desktop_automation.operations.time.sleep", lambda _seconds: None)
 
     with pytest.raises(InteractionError) as error:
         _operations(manager).window_wait(
@@ -168,8 +168,8 @@ def test_window_wait_timeout_without_a_matching_window_has_null_last_observation
 ) -> None:
     manager = FakeManager([InteractionError("window_not_found", "No matching window.")])
     ticks = iter((0.0, 0.0, 0.11))
-    monkeypatch.setattr("kde_interaction.operations.time.monotonic", lambda: next(ticks))
-    monkeypatch.setattr("kde_interaction.operations.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("kde_desktop_automation.operations.time.monotonic", lambda: next(ticks))
+    monkeypatch.setattr("kde_desktop_automation.operations.time.sleep", lambda _seconds: None)
 
     with pytest.raises(InteractionError) as error:
         _operations(manager).window_wait(
@@ -218,8 +218,8 @@ def test_fills_display_does_not_match_a_window_within_only_one_dimension(
     }
     manager = _display_manager([_window(False, geometry)])
     ticks = iter((0.0, 0.0, 0.11))
-    monkeypatch.setattr("kde_interaction.operations.time.monotonic", lambda: next(ticks))
-    monkeypatch.setattr("kde_interaction.operations.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("kde_desktop_automation.operations.time.monotonic", lambda: next(ticks))
+    monkeypatch.setattr("kde_desktop_automation.operations.time.sleep", lambda _seconds: None)
 
     with pytest.raises(InteractionError) as error:
         _operations(manager).window_wait(

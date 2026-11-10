@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from kde_interaction.backends.kwin_input import _WaylandConnection, _WlInterface, _WlMessage
-from kde_interaction.errors import InteractionError
+from kde_desktop_automation.backends.kwin_input import _WaylandConnection, _WlInterface, _WlMessage
+from kde_desktop_automation.errors import InteractionError
 
 _WINDOW_MANAGEMENT = "org_kde_plasma_window_management"
 _WINDOW = "org_kde_plasma_window"

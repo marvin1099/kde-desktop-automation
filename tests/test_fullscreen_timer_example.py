@@ -13,7 +13,7 @@ APP_ID = "org.example.Game"
 def _fake_binaries(tmp_path: Path) -> tuple[Path, Path]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    fake_cli = bin_dir / "kde-ai"
+    fake_cli = bin_dir / "kde-desktop"
     fake_cli.write_text(
         """#!/usr/bin/env python3
 import json
@@ -22,17 +22,17 @@ import sys
 from pathlib import Path
 
 args = sys.argv[1:]
-Path(os.environ['KDE_AI_CALL_LOG']).open('a').write(json.dumps(args) + '\\n')
+Path(os.environ['KDE_DESKTOP_CALL_LOG']).open('a').write(json.dumps(args) + '\\n')
 if 'wait' in args:
-    count_path = Path(os.environ['KDE_AI_WAIT_COUNT'])
+    count_path = Path(os.environ['KDE_DESKTOP_WAIT_COUNT'])
     count = int(count_path.read_text()) if count_path.exists() else 0
     count += 1
     count_path.write_text(str(count))
-    if count > 1 and os.environ.get('KDE_AI_FAIL_AFTER_RECHECK') == '1':
+    if count > 1 and os.environ.get('KDE_DESKTOP_FAIL_AFTER_RECHECK') == '1':
         error = {'schema_version': '1', 'ok': False, 'error': {'code': 'ambiguous_target'}}
         print(json.dumps(error))
         raise SystemExit(2)
-    if os.environ.get('KDE_AI_FAIL_WAIT') == '1':
+    if os.environ.get('KDE_DESKTOP_FAIL_WAIT') == '1':
         error = {'schema_version': '1', 'ok': False, 'error': {'code': 'backend_unavailable'}}
         print(json.dumps(error))
         raise SystemExit(2)
@@ -50,7 +50,7 @@ if 'wait' in args:
     print(json.dumps({'schema_version': '1', 'ok': True, 'data': data}))
 elif 'inspect' in args:
     app_id = args[args.index('inspect') + 2]
-    fullscreen = os.environ.get('KDE_AI_INSPECT_FULLSCREEN', 'true') == 'true'
+    fullscreen = os.environ.get('KDE_DESKTOP_INSPECT_FULLSCREEN', 'true') == 'true'
     print(json.dumps({'schema_version': '1', 'ok': True, 'data': {
         'window': {
             'window_id': '"""
@@ -79,8 +79,8 @@ import sys
 from pathlib import Path
 Path(os.environ['TIMER_RESULT']).write_text(json.dumps({
     'args': sys.argv[1:],
-    'target': os.environ.get('KDE_AI_TARGET'),
-    'window_id': os.environ.get('KDE_AI_WINDOW_ID'),
+    'target': os.environ.get('KDE_DESKTOP_TARGET'),
+    'window_id': os.environ.get('KDE_DESKTOP_WINDOW_ID'),
 }))
 """,
         encoding="utf-8",
@@ -94,8 +94,8 @@ def _environment(tmp_path: Path, fake_cli: Path) -> dict[str, str]:
     env.update(
         {
             "PATH": f"{fake_cli.parent}:{env['PATH']}",
-            "KDE_AI_CALL_LOG": str(tmp_path / "cli-calls.jsonl"),
-            "KDE_AI_WAIT_COUNT": str(tmp_path / "wait-count"),
+            "KDE_DESKTOP_CALL_LOG": str(tmp_path / "cli-calls.jsonl"),
+            "KDE_DESKTOP_WAIT_COUNT": str(tmp_path / "wait-count"),
             "TIMER_RESULT": str(tmp_path / "timer-result.json"),
         }
     )
@@ -143,8 +143,8 @@ def test_fullscreen_timer_wrapper_never_starts_timer_after_state_changes(
 ) -> None:
     fake_cli, fake_timer = _fake_binaries(tmp_path)
     env = _environment(tmp_path, fake_cli)
-    env["KDE_AI_INSPECT_FULLSCREEN"] = "false"
-    env["KDE_AI_FAIL_AFTER_RECHECK"] = "1"
+    env["KDE_DESKTOP_INSPECT_FULLSCREEN"] = "false"
+    env["KDE_DESKTOP_FAIL_AFTER_RECHECK"] = "1"
     result = subprocess.run(
         [
             "bash",

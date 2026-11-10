@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from kde_interaction.operations import DesktopOperations
+from kde_desktop_automation.operations import DesktopOperations
 
 
 class FakeManager:
@@ -32,7 +32,7 @@ class FakeMprisBackend:
 def test_private_media_uses_only_the_selected_private_session_bus(monkeypatch) -> None:
     manager = FakeManager()
     FakeMprisBackend.instances.clear()
-    monkeypatch.setattr("kde_interaction.operations.MprisBackend", FakeMprisBackend)
+    monkeypatch.setattr("kde_desktop_automation.operations.MprisBackend", FakeMprisBackend)
     operations = DesktopOperations("agent-123456789abc", manager=manager)  # type: ignore[arg-type]
 
     result = operations.media_players()
@@ -46,7 +46,7 @@ def test_private_media_uses_only_the_selected_private_session_bus(monkeypatch) -
 
 def test_live_media_uses_the_explicit_live_desktop_bus(monkeypatch) -> None:
     FakeMprisBackend.instances.clear()
-    monkeypatch.setattr("kde_interaction.operations.MprisBackend", FakeMprisBackend)
+    monkeypatch.setattr("kde_desktop_automation.operations.MprisBackend", FakeMprisBackend)
     operations = DesktopOperations(
         "user-desktop",
         user_desktop=FakeUserDesktop(),  # type: ignore[arg-type]

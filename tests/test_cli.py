@@ -2,7 +2,7 @@ import json
 
 from typer.testing import CliRunner
 
-from kde_interaction.cli import app
+from kde_desktop_automation.cli import app
 
 
 def test_doctor_json_requires_explicit_user_desktop_commands() -> None:
@@ -39,7 +39,7 @@ def test_media_control_cli_passes_explicit_player_action_and_seek_offset(monkeyp
                 "seconds": seconds,
             }
 
-    monkeypatch.setattr("kde_interaction.cli.DesktopOperations", FakeOperations)
+    monkeypatch.setattr("kde_desktop_automation.cli.DesktopOperations", FakeOperations)
 
     result = CliRunner().invoke(
         app,
@@ -76,7 +76,7 @@ def test_media_list_and_inspect_cli_return_json_for_selected_target(monkeypatch)
             calls.append((self.session, "inspect", player))
             return {"target": {"kind": self.session}, "player": player, "position_seconds": 3.5}
 
-    monkeypatch.setattr("kde_interaction.cli.DesktopOperations", FakeOperations)
+    monkeypatch.setattr("kde_desktop_automation.cli.DesktopOperations", FakeOperations)
     runner = CliRunner()
 
     listing = runner.invoke(
@@ -128,7 +128,7 @@ def test_audio_mute_and_route_cli_use_explicit_device_and_stream_guards(monkeypa
             )
             return {"stream_id": stream_id, "sink_name": sink_name}
 
-    monkeypatch.setattr("kde_interaction.cli.DesktopOperations", FakeOperations)
+    monkeypatch.setattr("kde_desktop_automation.cli.DesktopOperations", FakeOperations)
     runner = CliRunner()
 
     muted = runner.invoke(
@@ -225,7 +225,7 @@ def test_user_desktop_window_list_requires_explicit_namespace_and_returns_json(
                 "windows": [],
             }
 
-    monkeypatch.setattr("kde_interaction.cli.UserDesktopBackend", FakeUserDesktopBackend)
+    monkeypatch.setattr("kde_desktop_automation.cli.UserDesktopBackend", FakeUserDesktopBackend)
     runner = CliRunner()
 
     result = runner.invoke(app, ["user-desktop", "window", "list", "--json"])
@@ -244,8 +244,8 @@ def test_shared_window_commands_use_explicit_user_desktop_session_only(monkeypat
     def unexpected_private_manager():
         raise AssertionError("user-desktop must not instantiate or call a private session manager")
 
-    monkeypatch.setattr("kde_interaction.cli.UserDesktopBackend", FakeUserDesktopBackend)
-    monkeypatch.setattr("kde_interaction.cli._manager", unexpected_private_manager)
+    monkeypatch.setattr("kde_desktop_automation.cli.UserDesktopBackend", FakeUserDesktopBackend)
+    monkeypatch.setattr("kde_desktop_automation.cli._manager", unexpected_private_manager)
 
     result = CliRunner().invoke(
         app,
@@ -257,7 +257,7 @@ def test_shared_window_commands_use_explicit_user_desktop_session_only(monkeypat
 
 
 def test_shared_commands_without_selector_use_private_default_only(monkeypatch) -> None:
-    monkeypatch.delenv("KDE_AI_SESSION", raising=False)
+    monkeypatch.delenv("KDE_DESKTOP_SESSION", raising=False)
     default_id = "agent-123456789abc"
     calls: list[str] = []
 
@@ -273,7 +273,7 @@ def test_shared_commands_without_selector_use_private_default_only(monkeypatch) 
                 "windows": [],
             }
 
-    monkeypatch.setattr("kde_interaction.cli._manager", FakeManager)
+    monkeypatch.setattr("kde_desktop_automation.cli._manager", FakeManager)
 
     result = CliRunner().invoke(app, ["window", "list", "--json"])
 
@@ -288,7 +288,7 @@ def test_shared_commands_without_selector_use_private_default_only(monkeypatch) 
 def test_environment_session_selects_private_target_for_shared_cli(monkeypatch) -> None:
     environment_id = "agent-123456789abc"
     default_id = "agent-abcdef123456"
-    monkeypatch.setenv("KDE_AI_SESSION", environment_id)
+    monkeypatch.setenv("KDE_DESKTOP_SESSION", environment_id)
     calls: list[str] = []
 
     class FakeManager:
@@ -303,7 +303,7 @@ def test_environment_session_selects_private_target_for_shared_cli(monkeypatch) 
                 "windows": [],
             }
 
-    monkeypatch.setattr("kde_interaction.cli._manager", FakeManager)
+    monkeypatch.setattr("kde_desktop_automation.cli._manager", FakeManager)
     result = CliRunner().invoke(app, ["window", "list", "--json"])
 
     assert result.exit_code == 0
@@ -319,8 +319,8 @@ def test_missing_private_default_never_falls_back_to_user_desktop(monkeypatch) -
     def unexpected_user_desktop():
         raise AssertionError("missing private default must not attach to the live desktop")
 
-    monkeypatch.setattr("kde_interaction.cli._manager", FakeManager)
-    monkeypatch.setattr("kde_interaction.cli.UserDesktopBackend", unexpected_user_desktop)
+    monkeypatch.setattr("kde_desktop_automation.cli._manager", FakeManager)
+    monkeypatch.setattr("kde_desktop_automation.cli.UserDesktopBackend", unexpected_user_desktop)
 
     result = CliRunner().invoke(app, ["window", "list", "--json"])
 
@@ -347,7 +347,7 @@ def test_shared_input_uses_matching_window_command_for_private_target(monkeypatc
                 "effect_verified": False,
             }
 
-    monkeypatch.setattr("kde_interaction.cli._manager", FakeManager)
+    monkeypatch.setattr("kde_desktop_automation.cli._manager", FakeManager)
 
     result = CliRunner().invoke(
         app,
@@ -376,7 +376,7 @@ def test_window_wait_returns_a_unique_match_for_selected_target(monkeypatch) -> 
                 },
             }
 
-    monkeypatch.setattr("kde_interaction.cli._manager", FakeManager)
+    monkeypatch.setattr("kde_desktop_automation.cli._manager", FakeManager)
 
     result = CliRunner().invoke(
         app,
@@ -440,7 +440,7 @@ def test_window_wait_cli_supports_borderless_display_coverage(monkeypatch) -> No
                 }
             ]
 
-    monkeypatch.setattr("kde_interaction.cli._manager", FakeManager)
+    monkeypatch.setattr("kde_desktop_automation.cli._manager", FakeManager)
 
     result = CliRunner().invoke(
         app,

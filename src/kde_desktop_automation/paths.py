@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from kde_interaction.errors import InteractionError
+from kde_desktop_automation.errors import InteractionError
 
 _SESSION_ID = re.compile(r"^agent-[a-f0-9]{12}$")
 
@@ -89,6 +89,7 @@ class RuntimePaths:
         else:
             state_home = Path.home() / ".local" / "state"
 
+        # Keep these locations stable so a product rename does not orphan local sessions.
         app_runtime = runtime_dir / "kde-interaction"
         app_state = state_home / "kde-interaction"
         runtime_sessions = app_runtime / "sessions"

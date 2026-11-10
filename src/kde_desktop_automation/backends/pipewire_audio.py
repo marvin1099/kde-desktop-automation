@@ -6,8 +6,8 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from kde_interaction.errors import InteractionError
-from kde_interaction.process import (
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.process import (
     CommandResult,
     require_executable,
     require_success,

@@ -1,6 +1,6 @@
 import pytest
 
-from kde_interaction.backends.kwin_input import (
+from kde_desktop_automation.backends.kwin_input import (
     _FAKE_INPUT_REQUESTS,
     _KEY_STATE_PRESSED,
     _KEY_STATE_RELEASED,
@@ -9,7 +9,7 @@ from kde_interaction.backends.kwin_input import (
     _text_keysyms,
     parse_key_chord,
 )
-from kde_interaction.errors import InteractionError
+from kde_desktop_automation.errors import InteractionError
 
 
 def test_parse_key_chord_orders_modifier_and_key_transitions() -> None:
@@ -49,7 +49,7 @@ def test_text_keysyms_reject_empty_oversized_or_invalid_input(value: str) -> Non
 def test_input_receipt_reports_submission_without_claiming_effect() -> None:
     payload = InputReceipt("key CTRL+N", 4, True).to_dict(
         session_id="agent-0123456789ab",
-        wayland_display="kde-ai-0123456789ab",
+        wayland_display="kde-desktop-0123456789ab",
     )
 
     assert payload["events_submitted"] == 4

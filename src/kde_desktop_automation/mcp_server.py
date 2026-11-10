@@ -12,14 +12,14 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, ImageContent, TextContent, ToolAnnotations
 from pydantic import Field
 
-from kde_interaction.errors import InteractionError
-from kde_interaction.operations import DesktopOperations
-from kde_interaction.paths import RuntimePaths
-from kde_interaction.sessions import SessionManager
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.operations import DesktopOperations
+from kde_desktop_automation.paths import RuntimePaths
+from kde_desktop_automation.sessions import SessionManager
 
 _LOGGER = logging.getLogger(__name__)
 _SERVER_INSTRUCTIONS = """\
-KDE Interaction exposes session-scoped KDE window and input operations.
+KDE Desktop Automation exposes session-scoped KDE desktop operations.
 
 Every desktop tool call requires an explicit `session` argument: use a managed
 private session ID, or the exact value `user-desktop` to deliberately select
@@ -104,7 +104,7 @@ def create_mcp_server(
 ) -> FastMCP:
     """Build the stdio MCP server; factories allow operation-level transport tests."""
     server = FastMCP(
-        "kde-ai",
+        "kde-desktop-automation",
         instructions=_SERVER_INSTRUCTIONS,
     )
 
@@ -501,7 +501,7 @@ def create_mcp_server(
         """Capture a screenshot and return image pixels, optionally saving to output."""
         try:
             if output is None:
-                with tempfile.TemporaryDirectory(prefix="kde-ai-mcp-") as temporary_dir:
+                with tempfile.TemporaryDirectory(prefix="kde-desktop-mcp-") as temporary_dir:
                     screenshot_path = Path(temporary_dir) / "screenshot.png"
                     data = desktop_operations(session).screenshot(screenshot_path)
                     image_bytes = screenshot_path.read_bytes()
@@ -547,7 +547,7 @@ def _stop_private_session(manager: SessionManager, session_id: str) -> dict[str,
 
 def main() -> None:
     logging.basicConfig(level=logging.WARNING)
-    _LOGGER.info("Starting KDE Interaction MCP server over stdio")
+    _LOGGER.info("Starting KDE Desktop Automation MCP server over stdio")
     create_mcp_server().run(transport="stdio")
 
 

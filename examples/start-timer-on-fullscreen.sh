@@ -9,7 +9,7 @@ Usage:
 Waits for one uniquely matching window to meet the selected presentation
 condition, rechecks the same window, then replaces this process with the timer
 command. `user-desktop` explicitly opts into observing the live desktop.
-Requires kde-ai, jq, and Bash.
+Requires kde-desktop, jq, and Bash.
 EOF
     exit 2
 }
@@ -42,12 +42,12 @@ if [[ "$target" == "user-desktop" ]]; then
 fi
 
 while :; do
-    if result=$(kde-ai --session "$target" window wait \
+    if result=$(kde-desktop --session "$target" window wait \
         "${selector_args[@]}" "$wait_predicate" \
         --timeout 60 --json 2>&1); then
         window_id=$(jq -er '.data.window.window_id' <<<"$result")
 
-        if ! inspected=$(kde-ai --session "$target" window inspect "$window_id" --json 2>&1); then
+        if ! inspected=$(kde-desktop --session "$target" window inspect "$window_id" --json 2>&1); then
             error_code=$(jq -r '.error.code // empty' <<<"$inspected" 2>/dev/null || true)
             if [[ "$error_code" == "stale_target" ]]; then
                 continue
@@ -65,7 +65,7 @@ while :; do
 
         if [[ "$presentation" == "fills-display" ]]; then
             title=$(jq -er '.data.window.title' <<<"$inspected")
-            if ! rechecked=$(kde-ai --session "$target" window wait \
+            if ! rechecked=$(kde-desktop --session "$target" window wait \
                 --app-id "$app_id" --title "$title" --fills-display \
                 --timeout 1 --json 2>&1); then
                 error_code=$(jq -r '.error.code // empty' <<<"$rechecked" 2>/dev/null || true)
@@ -83,8 +83,8 @@ while :; do
             fi
         fi
 
-        export KDE_AI_TARGET="$target"
-        export KDE_AI_WINDOW_ID="$window_id"
+        export KDE_DESKTOP_TARGET="$target"
+        export KDE_DESKTOP_WINDOW_ID="$window_id"
         printf 'Detected %s window %s (%s); starting timer.\n' \
             "$presentation" "$window_id" "$app_id" >&2
         exec "$@"

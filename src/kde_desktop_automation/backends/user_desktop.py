@@ -15,15 +15,23 @@ from typing import Any
 
 from dbus_next.aio import MessageBus  # type: ignore[attr-defined]
 
-from kde_interaction.backends.displays import list_displays
-from kde_interaction.backends.kwin_input import InputReceipt, KWinFakeInput, fake_input_version
-from kde_interaction.backends.screenshots import capture_fullscreen
-from kde_interaction.errors import InteractionError
-from kde_interaction.process import require_executable, require_success, run_command
-from kde_interaction.window_selection import find_one_window
+from kde_desktop_automation.backends.displays import list_displays
+from kde_desktop_automation.backends.kwin_input import (
+    InputReceipt,
+    KWinFakeInput,
+    fake_input_version,
+)
+from kde_desktop_automation.backends.screenshots import capture_fullscreen
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.process import require_executable, require_success, run_command
+from kde_desktop_automation.window_selection import find_one_window
 
 _WINDOW_ID = re.compile(r"^\{?([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})\}?$")
 _PRIVATE_RUNTIME_MARKER = "/kde-interaction/sessions/"
+_PRIVATE_PROCESS_MARKERS = (
+    "KDE_DESKTOP_AUTOMATION_PROCESS_MARKER",
+    "KDE_AI_PROCESS_MARKER",
+)
 _KWINDOW_SERVICE = "org.kde.KWin"
 _KWINDOW_PATH = "/KWin"
 _KWINDOW_INTERFACE = "org.kde.KWin"
@@ -78,7 +86,7 @@ class DesktopWindow:
 def user_desktop_environment_issue(environ: Mapping[str, str] | None = None) -> str | None:
     """Return why this process cannot safely address the live KDE Wayland session."""
     values = os.environ if environ is None else environ
-    if values.get("KDE_AI_PROCESS_MARKER"):
+    if any(values.get(marker) for marker in _PRIVATE_PROCESS_MARKERS):
         return "This process belongs to a managed private session, not the user desktop."
 
     desktop_names = values.get("XDG_CURRENT_DESKTOP", "").lower().split(":")
@@ -230,7 +238,7 @@ class UserDesktopBackend:
         window, _active_id = self._require_active_window(window_id)
         with KWinFakeInput(
             self.socket_path,
-            application_name="kde-ai user-desktop",
+            application_name="kde-desktop user-desktop",
             reason=f"Explicit user-desktop key input to window {window.window_id}.",
         ) as client:
             active_before = self._verify_window_still_active(window.window_id)
@@ -241,7 +249,7 @@ class UserDesktopBackend:
         window, _active_id = self._require_active_window(window_id)
         with KWinFakeInput(
             self.socket_path,
-            application_name="kde-ai user-desktop",
+            application_name="kde-desktop user-desktop",
             reason=f"Explicit user-desktop text input to window {window.window_id}.",
         ) as client:
             active_before = self._verify_window_still_active(window.window_id)
@@ -264,7 +272,7 @@ class UserDesktopBackend:
             )
         with KWinFakeInput(
             self.socket_path,
-            application_name="kde-ai user-desktop",
+            application_name="kde-desktop user-desktop",
             reason=f"Explicit user-desktop click to window {window.window_id}.",
         ) as client:
             active_before = self._verify_window_still_active(window.window_id)

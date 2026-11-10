@@ -1,7 +1,7 @@
 [project]
-name = "kde-interaction"
+name = "kde-desktop-automation"
 version = "0.1.0"
-description = "An AI-friendly KDE interaction CLI with private and explicit live-desktop targets"
+description = "A CLI and Python toolkit for automating KDE Plasma, with MCP support for AI agents"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -13,8 +13,8 @@ dependencies = [
 ]
 
 [project.scripts]
-kde-ai = "kde_interaction.cli:main"
-kde-ai-mcp = "kde_interaction.mcp_server:main"
+kde-desktop = "kde_desktop_automation.cli:main"
+kde-desktop-mcp = "kde_desktop_automation.mcp_server:main"
 
 [dependency-groups]
 dev = [
@@ -37,7 +37,7 @@ markers = [
 
 [tool.coverage.run]
 branch = true
-source = ["kde_interaction"]
+source = ["kde_desktop_automation"]
 
 [tool.coverage.report]
 show_missing = true

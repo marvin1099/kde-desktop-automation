@@ -436,7 +436,7 @@ wheels = [
 ]
 
 [[package]]
-name = "kde-interaction"
+name = "kde-desktop-automation"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

@@ -4,10 +4,10 @@ from typing import Any
 
 import pytest
 
-from kde_interaction.backends import kwin_virtual
-from kde_interaction.backends.kwin_input import InputReceipt
-from kde_interaction.errors import InteractionError
-from kde_interaction.models import ProcessIdentity, SessionRecord
+from kde_desktop_automation.backends import kwin_virtual
+from kde_desktop_automation.backends.kwin_input import InputReceipt
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.models import ProcessIdentity, SessionRecord
 
 WINDOW_ID = "b5ff2329-3976-4c31-bf31-1538cb97c8f0"
 
@@ -24,7 +24,7 @@ def _session() -> SessionRecord:
         height=600,
         runtime_dir="/fake/runtime",
         home_dir="/fake/home",
-        wayland_display="kde-ai-test",
+        wayland_display="kde-desktop-test",
         dbus_address="unix:path=/fake/bus",
         kwin_process=process,
         dbus_process=process,

@@ -1,11 +1,12 @@
-# KDE desktop interaction interface — proposal
+# KDE Desktop Automation — interface proposal
 
 ## Goal
 
-Provide an AI-friendly, scriptable interface for inspecting and operating a KDE
-Plasma session. The interface should expose useful desktop concepts—windows,
-virtual desktops, displays, and input targets—instead of making callers compose
-raw `dotool`, `kdotool`, and screenshot commands themselves.
+Provide a scriptable interface for inspecting and automating a KDE Plasma
+session. It should expose useful desktop concepts—windows, virtual desktops,
+displays, and input targets—instead of making callers compose raw `dotool`,
+`kdotool`, and screenshot commands themselves. MCP makes the same operations
+available to AI agents as one of several client types.
 
 The CLI and stdio MCP server expose the same target-aware operations and data
 types, not separate semantics. The interface is a capability-aware facade over
@@ -42,7 +43,7 @@ Plasma window-management protocol also provides window UUIDs, title/app ID,
 geometry, fullscreen/active state, and activation requests when protocol v13+
 is available. The live desktop uses kdotool/KWin D-Bus for corresponding window
 operations. Shared commands select either target with `--session ID` or the
-explicit `--session user-desktop`; without `--session`, `KDE_AI_SESSION` may pin
+explicit `--session user-desktop`; without `--session`, `KDE_DESKTOP_SESSION` may pin
 a private target, otherwise operations use the configured private default. An
 unset/stopped private target never falls back to the live desktop.
 
@@ -273,25 +274,25 @@ Use noun/verb subcommands, human-readable output by default, and a versioned JSO
 mode for agents. Target selection is shared across operation groups:
 
 ```text
-kde-ai session create --name agent-a --default --json
-kde-ai window list --json                           # private default only
-kde-ai --session agent-0123456789ab window list --json
-kde-ai --session user-desktop window list --json
-kde-ai --session user-desktop window find --app-id org.kde.kate --json
-kde-ai --session user-desktop window wait --app-id org.kde.kate --timeout 10 --json
-kde-ai --session agent-0123456789ab window inspect WINDOW_UUID --json
-kde-ai --session user-desktop window activate WINDOW_UUID --json
-kde-ai --session user-desktop input key WINDOW_UUID CTRL+END --json
-kde-ai --session user-desktop input type WINDOW_UUID $'\nTODO' --json
-kde-ai --session user-desktop input click WINDOW_UUID 0.8 0.9 --json
-kde-ai --session agent-0123456789ab display list --json
-kde-ai --session user-desktop screenshot --output /tmp/desktop.png
-kde-ai --session user-desktop capabilities --json
+kde-desktop session create --name agent-a --default --json
+kde-desktop window list --json                           # private default only
+kde-desktop --session agent-0123456789ab window list --json
+kde-desktop --session user-desktop window list --json
+kde-desktop --session user-desktop window find --app-id org.kde.kate --json
+kde-desktop --session user-desktop window wait --app-id org.kde.kate --timeout 10 --json
+kde-desktop --session agent-0123456789ab window inspect WINDOW_UUID --json
+kde-desktop --session user-desktop window activate WINDOW_UUID --json
+kde-desktop --session user-desktop input key WINDOW_UUID CTRL+END --json
+kde-desktop --session user-desktop input type WINDOW_UUID $'\nTODO' --json
+kde-desktop --session user-desktop input click WINDOW_UUID 0.8 0.9 --json
+kde-desktop --session agent-0123456789ab display list --json
+kde-desktop --session user-desktop screenshot --output /tmp/desktop.png
+kde-desktop --session user-desktop capabilities --json
 ```
 
 The first created private session becomes the default. `session use ID` changes
 it, and `session create --default` selects a new one. Selection precedence is
-`--session ID`, then private-only `KDE_AI_SESSION`, then the configured default.
+`--session ID`, then private-only `KDE_DESKTOP_SESSION`, then the configured default.
 Additional agents should pass their session ID explicitly or receive a
 per-agent environment; omission never chooses the most recently created
 session. If no running private target is configured, shared commands fail with
@@ -300,9 +301,9 @@ setup guidance rather than targeting another desktop. The old
 compatibility aliases while scripts migrate.
 
 ```text
-kde-ai session list
-kde-ai session create --name agent-b --width 1920 --height 1080
-kde-ai session use agent-0123456789ab
+kde-desktop session list
+kde-desktop session create --name agent-b --width 1920 --height 1080
+kde-desktop session use agent-0123456789ab
 ```
 
 The global `--session` selector is parsed before the operation group. Both
@@ -318,29 +319,29 @@ commands shown here are not implemented. See “What the current implementation
 can do” below for the executable subset.
 
 ```text
-kde-ai observe [--target session|window:REF|desktop:REF|display:REF] [--format json]
-kde-ai observe --include interaction-context [--format json]
-kde-ai window list [--desktop current|all] [--format json]
-kde-ai window get --target REF [--format json]
-kde-ai window focus --target REF
-kde-ai window move --target REF --to DISPLAY --at 0.2,0.1 --space display --anchor top-left
-kde-ai window resize --target REF --size 1000x700
-kde-ai window minimize --target REF
-kde-ai desktop list [--format json]
-kde-ai desktop switch --target REF
-kde-ai display list [--format json]
-kde-ai display get --target REF [--format json]
-kde-ai display configure --target REF --mode 2560x1440@60 --dry-run
-kde-ai input click --target window:REF --at 0.5,0.5 --space window
-kde-ai input type --target window:REF --text 'search query'
-kde-ai input key --target window:REF --keys Ctrl+L
-kde-ai input scroll --target window:REF --at 0.5,0.5 --delta 0,-3 --space window
-kde-ai screenshot --target window:REF --output /tmp/window.png
-kde-ai wait --until window:REF.focused --timeout 3s
-kde-ai capabilities [--format json]
+kde-desktop observe [--target session|window:REF|desktop:REF|display:REF] [--format json]
+kde-desktop observe --include interaction-context [--format json]
+kde-desktop window list [--desktop current|all] [--format json]
+kde-desktop window get --target REF [--format json]
+kde-desktop window focus --target REF
+kde-desktop window move --target REF --to DISPLAY --at 0.2,0.1 --space display --anchor top-left
+kde-desktop window resize --target REF --size 1000x700
+kde-desktop window minimize --target REF
+kde-desktop desktop list [--format json]
+kde-desktop desktop switch --target REF
+kde-desktop display list [--format json]
+kde-desktop display get --target REF [--format json]
+kde-desktop display configure --target REF --mode 2560x1440@60 --dry-run
+kde-desktop input click --target window:REF --at 0.5,0.5 --space window
+kde-desktop input type --target window:REF --text 'search query'
+kde-desktop input key --target window:REF --keys Ctrl+L
+kde-desktop input scroll --target window:REF --at 0.5,0.5 --delta 0,-3 --space window
+kde-desktop screenshot --target window:REF --output /tmp/window.png
+kde-desktop wait --until window:REF.focused --timeout 3s
+kde-desktop capabilities [--format json]
 # Optional, capability-conditional operations:
-kde-ai application launch --desktop-id org.kde.kate
-kde-ai notification dnd --duration 45m
+kde-desktop application launch --desktop-id org.kde.kate
+kde-desktop notification dnd --duration 45m
 ```
 
 `--target` is required for actions where the destination could otherwise be
@@ -451,11 +452,11 @@ coordinates so points chosen from an image can be mapped correctly.
 ## Example agent loop
 
 ```sh
-kde-ai observe --format json
-kde-ai window list --format json
-kde-ai screenshot --target window:w-7f31 --output /tmp/konsole.png
-kde-ai input click --target window:w-7f31 --at 0.5,0.5 --space window
-kde-ai observe --target window:w-7f31 --format json
+kde-desktop observe --format json
+kde-desktop window list --format json
+kde-desktop screenshot --target window:w-7f31 --output /tmp/konsole.png
+kde-desktop input click --target window:w-7f31 --at 0.5,0.5 --space window
+kde-desktop observe --target window:w-7f31 --format json
 ```
 
 The normal workflow is **observe → choose a target → act → verify**. The CLI
@@ -591,13 +592,13 @@ separate from the host's, so do not assume the ticket site is already signed in.
 
 ```sh
 TARGET='agent-0123456789ab'
-kde-ai --session "$TARGET" capabilities --json
-kde-ai --session "$TARGET" display list --json
-kde-ai --session "$TARGET" window list --json
-kde-ai --session "$TARGET" window find --app-id org.kde.kate --json
-kde-ai --session "$TARGET" window find --app-id org.kde.konsole --json
-kde-ai --session "$TARGET" window find --app-id org.mozilla.firefox --title 123456 --json
-kde-ai --session "$TARGET" screenshot --output "/tmp/kde-ai-triage-before-$$.png" --json
+kde-desktop --session "$TARGET" capabilities --json
+kde-desktop --session "$TARGET" display list --json
+kde-desktop --session "$TARGET" window list --json
+kde-desktop --session "$TARGET" window find --app-id org.kde.kate --json
+kde-desktop --session "$TARGET" window find --app-id org.kde.konsole --json
+kde-desktop --session "$TARGET" window find --app-id org.mozilla.firefox --title 123456 --json
+kde-desktop --session "$TARGET" screenshot --output "/tmp/kde-desktop-triage-before-$$.png" --json
 ```
 
 After identifying one exact window and reviewing a fresh screenshot, these are
@@ -608,17 +609,17 @@ control from fresh screenshots; the example below only shows syntax and cannot
 verify that any control or page state is correct.
 
 ```sh
-kde-ai --session "$TARGET" window inspect FIREFOX_WINDOW_UUID --json
-kde-ai --session "$TARGET" window activate FIREFOX_WINDOW_UUID --json
+kde-desktop --session "$TARGET" window inspect FIREFOX_WINDOW_UUID --json
+kde-desktop --session "$TARGET" window activate FIREFOX_WINDOW_UUID --json
 # Illustrative syntax only. Reinspect after each UI transition and replace each
 # coordinate with a point measured for the currently visible control.
-kde-ai --session "$TARGET" input click FIREFOX_WINDOW_UUID STATUS_CONTROL_X STATUS_CONTROL_Y --json
-kde-ai --session "$TARGET" input click FIREFOX_WINDOW_UUID IN_PROGRESS_OPTION_X IN_PROGRESS_OPTION_Y --json
-kde-ai --session "$TARGET" input click FIREFOX_WINDOW_UUID NOTE_FIELD_X NOTE_FIELD_Y --json
-kde-ai --session "$TARGET" input type FIREFOX_WINDOW_UUID 'Reproduced on Wayland.' --json
+kde-desktop --session "$TARGET" input click FIREFOX_WINDOW_UUID STATUS_CONTROL_X STATUS_CONTROL_Y --json
+kde-desktop --session "$TARGET" input click FIREFOX_WINDOW_UUID IN_PROGRESS_OPTION_X IN_PROGRESS_OPTION_Y --json
+kde-desktop --session "$TARGET" input click FIREFOX_WINDOW_UUID NOTE_FIELD_X NOTE_FIELD_Y --json
+kde-desktop --session "$TARGET" input type FIREFOX_WINDOW_UUID 'Reproduced on Wayland.' --json
 # Verify the note/status visually before deciding to submit:
-kde-ai --session "$TARGET" input click FIREFOX_WINDOW_UUID SUBMIT_X SUBMIT_Y --json
-kde-ai --session "$TARGET" screenshot --output "/tmp/kde-ai-triage-after-$$.png" --json
+kde-desktop --session "$TARGET" input click FIREFOX_WINDOW_UUID SUBMIT_X SUBMIT_Y --json
+kde-desktop --session "$TARGET" screenshot --output "/tmp/kde-desktop-triage-after-$$.png" --json
 ```
 
 These commands do **not** make the requested workflow achievable end-to-end:

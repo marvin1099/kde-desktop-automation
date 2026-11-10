@@ -7,12 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from kde_interaction.backends import kwin_virtual
-from kde_interaction.backends.kwin_virtual import KWinVirtualBackend
-from kde_interaction.errors import InteractionError
-from kde_interaction.models import ProcessIdentity, SessionRecord
-from kde_interaction.paths import RuntimePaths
-from kde_interaction.process import (
+from kde_desktop_automation.backends import kwin_virtual
+from kde_desktop_automation.backends.kwin_virtual import KWinVirtualBackend
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.models import ProcessIdentity, SessionRecord
+from kde_desktop_automation.paths import RuntimePaths
+from kde_desktop_automation.process import (
     pidfd_supported,
     process_identity,
     process_matches,
@@ -44,11 +44,15 @@ def test_process_identity_can_be_verified_without_signalling() -> None:
     assert process_state(os.getpid()) not in (None, "Z")
 
 
-def test_process_identity_can_use_an_environment_marker() -> None:
-    marker = f"kde-ai-marker-{uuid.uuid4().hex}"
+@pytest.mark.parametrize(
+    "marker_environment",
+    ["KDE_DESKTOP_AUTOMATION_PROCESS_MARKER", "KDE_AI_PROCESS_MARKER"],
+)
+def test_process_identity_can_use_an_environment_marker(marker_environment: str) -> None:
+    marker = f"kde-desktop-marker-{uuid.uuid4().hex}"
     child = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(60)"],
-        env=os.environ | {"KDE_AI_PROCESS_MARKER": marker},
+        env=os.environ | {marker_environment: marker},
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -70,8 +74,15 @@ def test_process_identity_can_use_an_environment_marker() -> None:
             child.wait(timeout=1.0)
 
 
-def test_environment_marker_finds_descendants_for_session_cleanup(tmp_path) -> None:
-    marker = f"kde-ai-tree-{uuid.uuid4().hex}"
+@pytest.mark.parametrize(
+    "marker_environment",
+    ["KDE_DESKTOP_AUTOMATION_PROCESS_MARKER", "KDE_AI_PROCESS_MARKER"],
+)
+def test_environment_marker_finds_descendants_for_session_cleanup(
+    tmp_path,
+    marker_environment: str,
+) -> None:
+    marker = f"kde-desktop-tree-{uuid.uuid4().hex}"
     child_ready = tmp_path / "child-ready"
     child_script = (
         "from pathlib import Path; import time; "
@@ -84,7 +95,7 @@ def test_environment_marker_finds_descendants_for_session_cleanup(tmp_path) -> N
     )
     parent = subprocess.Popen(
         [sys.executable, "-c", script],
-        env=os.environ | {"KDE_AI_PROCESS_MARKER": marker},
+        env=os.environ | {marker_environment: marker},
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -132,7 +143,7 @@ def test_application_cleanup_rescans_for_child_spawned_during_parent_shutdown(tm
     )
     parent = subprocess.Popen(
         [sys.executable, "-c", parent_script],
-        env=os.environ | {"KDE_AI_PROCESS_MARKER": marker},
+        env=os.environ | {"KDE_DESKTOP_AUTOMATION_PROCESS_MARKER": marker},
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -177,7 +188,7 @@ def test_application_cleanup_retries_a_marked_process_identity_change(
     marker = f"agent-0123456789ab-app-{uuid.uuid4().hex}"
     process = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(60)"],
-        env=os.environ | {"KDE_AI_PROCESS_MARKER": marker},
+        env=os.environ | {"KDE_DESKTOP_AUTOMATION_PROCESS_MARKER": marker},
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -313,7 +324,7 @@ def test_process_start_ticks_reject_pid_reuse_marker() -> None:
     reason="safe termination requires Linux pidfd support",
 )
 def test_terminate_verified_uses_a_pidfd_for_the_target_process() -> None:
-    marker = f"kde-ai-child-{uuid.uuid4().hex}"
+    marker = f"kde-desktop-child-{uuid.uuid4().hex}"
     child = subprocess.Popen(
         [sys.executable, "-c", "import sys, time; print(sys.argv[1]); time.sleep(60)", marker],
         stdin=subprocess.DEVNULL,

@@ -5,8 +5,13 @@ from datetime import UTC, datetime
 from math import isfinite
 from typing import Any
 
-from kde_interaction.errors import InteractionError
-from kde_interaction.process import CommandResult, require_executable, require_success, run_command
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.process import (
+    CommandResult,
+    require_executable,
+    require_success,
+    run_command,
+)
 
 _TRANSPORT_ACTIONS = frozenset({"play", "pause", "play-pause", "stop", "next", "previous"})
 _MAX_SEEK_SECONDS = 24 * 60 * 60

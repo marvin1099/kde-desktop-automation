@@ -11,8 +11,8 @@ from mcp.client.stdio import stdio_client
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, ImageContent
 
-from kde_interaction.errors import InteractionError
-from kde_interaction.mcp_server import OperationsFactory, create_mcp_server
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.mcp_server import OperationsFactory, create_mcp_server
 
 
 class FakeOperations:
@@ -342,7 +342,7 @@ def test_mcp_server_completes_stdio_handshake_and_lists_tools() -> None:
     async def verify() -> set[str]:
         params = StdioServerParameters(
             command=sys.executable,
-            args=["-m", "kde_interaction.mcp_server"],
+            args=["-m", "kde_desktop_automation.mcp_server"],
         )
         async with (
             stdio_client(params) as (read_stream, write_stream),

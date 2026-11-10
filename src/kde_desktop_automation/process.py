@@ -13,10 +13,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from kde_interaction.errors import InteractionError
-from kde_interaction.models import ProcessIdentity
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.models import ProcessIdentity
 
 _LIBC: Any = None
+_PROCESS_MARKER_ENV = "KDE_DESKTOP_AUTOMATION_PROCESS_MARKER"
+_LEGACY_PROCESS_MARKER_ENV = "KDE_AI_PROCESS_MARKER"
 try:
     _LIBC = ctypes.CDLL(ctypes.util.find_library("c") or None, use_errno=True)
 except OSError:  # pragma: no cover - unusual non-glibc/minimal Linux environments
@@ -210,14 +212,19 @@ def process_matches(identity: ProcessIdentity) -> bool:
         process_environment = Path(f"/proc/{identity.pid}/environ").read_bytes().split(b"\0")
     except OSError:
         return False
-    return f"KDE_AI_PROCESS_MARKER={identity.marker}".encode() in process_environment
+    return any(
+        f"{name}={identity.marker}".encode() in process_environment
+        for name in (_PROCESS_MARKER_ENV, _LEGACY_PROCESS_MARKER_ENV)
+    )
 
 
 def processes_with_environment_marker(marker: str) -> list[ProcessIdentity]:
     """Find same-user processes that inherited one launch's unique marker."""
     if not marker or "\0" in marker:
         return []
-    marker_value = f"KDE_AI_PROCESS_MARKER={marker}".encode()
+    marker_values = {
+        f"{name}={marker}".encode() for name in (_PROCESS_MARKER_ENV, _LEGACY_PROCESS_MARKER_ENV)
+    }
     matches: list[ProcessIdentity] = []
     try:
         entries = tuple(Path("/proc").iterdir())
@@ -237,7 +244,7 @@ def processes_with_environment_marker(marker: str) -> list[ProcessIdentity]:
             continue
         try:
             environment = (entry / "environ").read_bytes().split(b"\0")
-            if marker_value not in environment:
+            if marker_values.isdisjoint(environment):
                 continue
             executable = os.readlink(entry / "exe")
             command = tuple(

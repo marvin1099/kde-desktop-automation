@@ -11,8 +11,8 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from kde_interaction.errors import InteractionError
-from kde_interaction.process import require_success, run_command
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.process import require_success, run_command
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}

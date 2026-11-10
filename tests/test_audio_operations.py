@@ -4,8 +4,8 @@ from typing import Any
 
 import pytest
 
-from kde_interaction.errors import InteractionError
-from kde_interaction.operations import DesktopOperations
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.operations import DesktopOperations
 
 
 class FakeUserDesktop:
@@ -26,7 +26,9 @@ def test_audio_operations_require_explicit_live_desktop_without_private_fallback
     def unexpected_backend(_environ: dict[str, str]) -> FakeAudioBackend:
         raise AssertionError("private targets must never construct a host audio backend")
 
-    monkeypatch.setattr("kde_interaction.operations.PipeWireAudioBackend", unexpected_backend)
+    monkeypatch.setattr(
+        "kde_desktop_automation.operations.PipeWireAudioBackend", unexpected_backend
+    )
     operations = DesktopOperations("agent-123456789abc", manager=object())  # type: ignore[arg-type]
 
     with pytest.raises(InteractionError) as error:
@@ -38,7 +40,7 @@ def test_audio_operations_require_explicit_live_desktop_without_private_fallback
 def test_audio_operations_use_the_explicit_live_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("kde_interaction.operations.PipeWireAudioBackend", FakeAudioBackend)
+    monkeypatch.setattr("kde_desktop_automation.operations.PipeWireAudioBackend", FakeAudioBackend)
     operations = DesktopOperations(
         "user-desktop",
         user_desktop=FakeUserDesktop(),  # type: ignore[arg-type]

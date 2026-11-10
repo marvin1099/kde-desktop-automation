@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from kde_interaction.errors import InteractionError
+from kde_desktop_automation.errors import InteractionError
 
 
 def find_one_window(

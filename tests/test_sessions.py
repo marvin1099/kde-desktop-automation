@@ -9,12 +9,12 @@ from pathlib import Path
 
 import pytest
 
-from kde_interaction.backends.displays import DisplayInfo
-from kde_interaction.backends.kwin_input import InputReceipt
-from kde_interaction.errors import InteractionError
-from kde_interaction.models import ProcessIdentity, SessionRecord
-from kde_interaction.paths import RuntimePaths
-from kde_interaction.sessions import SessionManager
+from kde_desktop_automation.backends.displays import DisplayInfo
+from kde_desktop_automation.backends.kwin_input import InputReceipt
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.models import ProcessIdentity, SessionRecord
+from kde_desktop_automation.paths import RuntimePaths
+from kde_desktop_automation.sessions import SessionManager
 
 
 class FakeBackend:

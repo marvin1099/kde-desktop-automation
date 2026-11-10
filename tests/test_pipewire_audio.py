@@ -6,10 +6,10 @@ from typing import Any
 
 import pytest
 
-import kde_interaction.backends.pipewire_audio as pipewire_audio
-from kde_interaction.backends.pipewire_audio import PipeWireAudioBackend
-from kde_interaction.errors import InteractionError
-from kde_interaction.process import CommandResult
+import kde_desktop_automation.backends.pipewire_audio as pipewire_audio
+from kde_desktop_automation.backends.pipewire_audio import PipeWireAudioBackend
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.process import CommandResult
 
 TARGET = {"kind": "user-desktop"}
 
@@ -98,7 +98,7 @@ def _fake_backend(
     current = state or _state()
     calls: list[tuple[str, ...]] = []
     monkeypatch.setattr(
-        "kde_interaction.backends.pipewire_audio.require_executable",
+        "kde_desktop_automation.backends.pipewire_audio.require_executable",
         lambda name: f"/usr/bin/{name}",
     )
 
@@ -154,7 +154,9 @@ def _fake_backend(
             return CommandResult(tuple(argv), 0, "", "")
         raise AssertionError(f"Unexpected audio command: {command}")
 
-    monkeypatch.setattr("kde_interaction.backends.pipewire_audio.run_command", fake_run_command)
+    monkeypatch.setattr(
+        "kde_desktop_automation.backends.pipewire_audio.run_command", fake_run_command
+    )
     backend = PipeWireAudioBackend({"XDG_RUNTIME_DIR": "/run/user/test"})
     return backend, calls, current
 

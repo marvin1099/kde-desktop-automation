@@ -7,16 +7,16 @@ from pathlib import Path
 
 import pytest
 
-from kde_interaction.backends.kwin_virtual import KWinVirtualBackend
-from kde_interaction.paths import RuntimePaths
-from kde_interaction.process import process_start_ticks, processes_with_environment_marker
-from kde_interaction.sessions import SessionManager
+from kde_desktop_automation.backends.kwin_virtual import KWinVirtualBackend
+from kde_desktop_automation.paths import RuntimePaths
+from kde_desktop_automation.process import process_start_ticks, processes_with_environment_marker
+from kde_desktop_automation.sessions import SessionManager
 
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
-        os.environ.get("KDE_AI_RUN_KWIN_INTEGRATION") != "1",
-        reason="set KDE_AI_RUN_KWIN_INTEGRATION=1 to start a private KWin compositor",
+        os.environ.get("KDE_DESKTOP_RUN_KWIN_INTEGRATION") != "1",
+        reason="set KDE_DESKTOP_RUN_KWIN_INTEGRATION=1 to start a private KWin compositor",
     ),
 ]
 
@@ -38,9 +38,12 @@ def test_private_kwin_output_and_screenshot_round_trip(tmp_path, monkeypatch) ->
 
     def record_process_marker(command, *args, **kwargs):
         environment = kwargs.get("env")
-        if environment is not None and "KDE_AI_PROCESS_MARKER" in environment:
+        if environment is not None and "KDE_DESKTOP_AUTOMATION_PROCESS_MARKER" in environment:
             process_markers.append(
-                (tuple(str(part) for part in command), environment["KDE_AI_PROCESS_MARKER"])
+                (
+                    tuple(str(part) for part in command),
+                    environment["KDE_DESKTOP_AUTOMATION_PROCESS_MARKER"],
+                )
             )
         return real_popen(command, *args, **kwargs)
 
@@ -57,7 +60,7 @@ def test_private_kwin_output_and_screenshot_round_trip(tmp_path, monkeypatch) ->
 
         marked_helper = subprocess.Popen(
             [sys.executable, "-c", "import time; time.sleep(60)"],
-            env=os.environ | {"KDE_AI_PROCESS_MARKER": session.session_id},
+            env=os.environ | {"KDE_DESKTOP_AUTOMATION_PROCESS_MARKER": session.session_id},
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

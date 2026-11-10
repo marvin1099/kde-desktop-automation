@@ -15,24 +15,28 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.parse import quote
 
-from kde_interaction.backends.displays import DisplayInfo, list_displays
-from kde_interaction.backends.kwin_input import InputReceipt, KWinFakeInput, fake_input_version
-from kde_interaction.backends.kwin_window_management import (
+from kde_desktop_automation.backends.displays import DisplayInfo, list_displays
+from kde_desktop_automation.backends.kwin_input import (
+    InputReceipt,
+    KWinFakeInput,
+    fake_input_version,
+)
+from kde_desktop_automation.backends.kwin_window_management import (
     KWinWindowManagementClient,
     normalize_window_id,
     window_management_version,
 )
-from kde_interaction.backends.kwin_window_management import (
+from kde_desktop_automation.backends.kwin_window_management import (
     activate_window as activate_private_window,
 )
-from kde_interaction.backends.kwin_window_management import (
+from kde_desktop_automation.backends.kwin_window_management import (
     list_windows as list_private_windows,
 )
-from kde_interaction.backends.screenshots import capture_fullscreen
-from kde_interaction.errors import InteractionError
-from kde_interaction.models import ProcessIdentity, SessionRecord
-from kde_interaction.paths import RuntimePaths, SessionPaths
-from kde_interaction.process import (
+from kde_desktop_automation.backends.screenshots import capture_fullscreen
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.models import ProcessIdentity, SessionRecord
+from kde_desktop_automation.paths import RuntimePaths, SessionPaths
+from kde_desktop_automation.process import (
     pidfd_supported,
     process_identity,
     process_matches,
@@ -126,7 +130,7 @@ class KWinVirtualBackend:
             )
 
         session_paths = self.paths.for_session(session_id, create=True)
-        wayland_display = f"kde-ai-{session_id.removeprefix('agent-')}"
+        wayland_display = f"kde-desktop-{session_id.removeprefix('agent-')}"
         bus_path = session_paths.runtime_dir / "bus"
         dbus_address = f"unix:path={quote(str(bus_path), safe='/')}"
         base_env = build_private_environment(
@@ -134,7 +138,7 @@ class KWinVirtualBackend:
             wayland_display=wayland_display,
             dbus_address=dbus_address,
         )
-        base_env["KDE_AI_PROCESS_MARKER"] = session_id
+        base_env["KDE_DESKTOP_AUTOMATION_PROCESS_MARKER"] = session_id
 
         log_fd = _open_private_log(session_paths.log_file)
         dbus_process: subprocess.Popen[str] | None = None
@@ -312,7 +316,7 @@ class KWinVirtualBackend:
         command = (executable, *argv[1:])
         marker = f"{session.session_id}-app-{uuid.uuid4().hex}"
         environment = self.environment(session)
-        environment["KDE_AI_PROCESS_MARKER"] = marker
+        environment["KDE_DESKTOP_AUTOMATION_PROCESS_MARKER"] = marker
         log_fd = _open_private_log(self.paths.for_session(session.session_id).log_file)
         try:
             try:
@@ -505,7 +509,7 @@ class KWinVirtualBackend:
         socket_path = Path(session.runtime_dir) / session.wayland_display
         with KWinFakeInput(
             socket_path,
-            application_name="kde-ai",
+            application_name="kde-desktop",
             reason=f"Session-scoped click in private session {session.session_id}.",
         ) as client:
             return client.click(x, y, button)
@@ -515,7 +519,7 @@ class KWinVirtualBackend:
         socket_path = Path(session.runtime_dir) / session.wayland_display
         with KWinFakeInput(
             socket_path,
-            application_name="kde-ai",
+            application_name="kde-desktop",
             reason=f"Session-scoped {kind} input in private session {session.session_id}.",
         ) as client:
             if kind == "key":
@@ -556,7 +560,7 @@ class KWinVirtualBackend:
         socket_path = Path(session.runtime_dir) / session.wayland_display
         with KWinFakeInput(
             socket_path,
-            application_name="kde-ai",
+            application_name="kde-desktop",
             reason=(
                 f"Window-scoped input in private session {session.session_id} "
                 f"to window {normalized_id}."
@@ -732,7 +736,8 @@ class KWinVirtualBackend:
 
     def _validate_session_identity(self, session: SessionRecord) -> None:
         session_paths = self.paths.for_session(session.session_id)
-        expected_wayland = f"kde-ai-{session.session_id.removeprefix('agent-')}"
+        expected_wayland = f"kde-desktop-{session.session_id.removeprefix('agent-')}"
+        legacy_wayland = f"kde-ai-{session.session_id.removeprefix('agent-')}"
         expected_bus_path = session_paths.runtime_dir / "bus"
         expected_bus_address = f"unix:path={quote(str(expected_bus_path), safe='/')}"
         application_markers = [process.marker for process in session.application_processes]
@@ -740,8 +745,8 @@ class KWinVirtualBackend:
             session.backend == self.name
             and session.runtime_dir == str(session_paths.runtime_dir)
             and session.home_dir == str(session_paths.home_dir)
-            and session.wayland_display == expected_wayland
-            and session.kwin_process.marker == expected_wayland
+            and session.wayland_display in {expected_wayland, legacy_wayland}
+            and session.kwin_process.marker == session.wayland_display
             and session.dbus_process.marker == str(expected_bus_path)
             and session.kwin_process.pid != session.dbus_process.pid
             and _is_private_bus_address(session.dbus_address, expected_bus_address)

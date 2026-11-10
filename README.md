@@ -1,9 +1,11 @@
-# KDE Interaction
+# KDE Desktop Automation
 
-An AI-friendly CLI and Python package for observing and automating KDE Plasma.
-The CLI and MCP server share one target-aware operation layer. Private hidden
-desktops are the default; accessing the live desktop always requires the
-explicit `user-desktop` target.
+A CLI and Python toolkit for observing and automating KDE Plasma desktops. It
+also provides an MCP server for AI agents. The CLI and MCP server share one
+target-aware operation layer. Private hidden desktops are the default; accessing
+the live desktop always requires the explicit `user-desktop` target.
+
+Use `KDE_DESKTOP_SESSION` to select a private session by default.
 
 ## Current prototype
 
@@ -14,25 +16,25 @@ working on the physical desktop while this session is inspected or screenshotted
 
 ```bash
 uv sync
-uv run kde-ai doctor
-uv run kde-ai session create --name agent --width 1280 --height 800
-uv run kde-ai session list
-uv run kde-ai session displays SESSION_ID
-uv run kde-ai session screenshot SESSION_ID --output /tmp/agent.png
-uv run kde-ai session launch SESSION_ID --json -- kate --new /tmp/agent-note.txt
-uv run kde-ai session type SESSION_ID 'Hello from kde-ai'
-uv run kde-ai session key SESSION_ID CTRL+S
-uv run kde-ai session screenshot SESSION_ID --output /tmp/agent-after.png
-uv run kde-ai session stop SESSION_ID
+uv run kde-desktop doctor
+uv run kde-desktop session create --name agent --width 1280 --height 800
+uv run kde-desktop session list
+uv run kde-desktop session displays SESSION_ID
+uv run kde-desktop session screenshot SESSION_ID --output /tmp/agent.png
+uv run kde-desktop session launch SESSION_ID --json -- kate --new /tmp/agent-note.txt
+uv run kde-desktop session type SESSION_ID 'Hello from kde-desktop'
+uv run kde-desktop session key SESSION_ID CTRL+S
+uv run kde-desktop session screenshot SESSION_ID --output /tmp/agent-after.png
+uv run kde-desktop session stop SESSION_ID
 ```
 
 `session create` prints the generated ID. The isolated session is not a
 security sandbox: it runs as the current Unix user, though with a private home
 and session bus. Do not run untrusted applications in it.
 
-`kde-ai doctor` reports host prerequisites without enumerating or injecting into
+`kde-desktop doctor` reports host prerequisites without enumerating or injecting into
 the live desktop. To probe live window/input capabilities, explicitly run
-`kde-ai --session user-desktop capabilities`.
+`kde-desktop --session user-desktop capabilities`.
 
 `session launch` passes the executable and arguments directly (no shell) and
 records the launched process for session cleanup. The legacy `session key`,
@@ -58,22 +60,22 @@ session ID, or explicitly pass `user-desktop` to opt into the physical desktop:
 
 ```bash
 # The first created private session becomes the private default.
-uv run kde-ai session create --name agent-a --width 1280 --height 800 --json
-uv run kde-ai window list --json
+uv run kde-desktop session create --name agent-a --width 1280 --height 800 --json
+uv run kde-desktop window list --json
 
 # Create additional independent private desktops; name the target in scripts.
-uv run kde-ai session create --name agent-b --json
-uv run kde-ai --session agent-0123456789ab window list --json
+uv run kde-desktop session create --name agent-b --json
+uv run kde-desktop --session agent-0123456789ab window list --json
 
 # Real desktop access is never inferred: select it on each command.
-uv run kde-ai --session user-desktop window list --json
-uv run kde-ai --session user-desktop window find --title Kate --json
-uv run kde-ai --session user-desktop screenshot --output /tmp/desktop.png
+uv run kde-desktop --session user-desktop window list --json
+uv run kde-desktop --session user-desktop window find --title Kate --json
+uv run kde-desktop --session user-desktop screenshot --output /tmp/desktop.png
 ```
 
 `session create --default` makes a newly created private session the default;
 `session use SESSION_ID` changes the private default. Target selection precedence
-for shared commands is: explicit `--session`, then `KDE_AI_SESSION`, then the
+for shared commands is: explicit `--session`, then `KDE_DESKTOP_SESSION`, then the
 configured private default. The environment variable can contain a managed
 private session ID only; setting it to `user-desktop` is rejected. Use
 `--session user-desktop` on each command to opt into the live desktop.
@@ -81,9 +83,9 @@ private session ID only; setting it to `user-desktop` is rejected. Use
 For a persistent selection in a shell or an agent process environment, set:
 
 ```bash
-export KDE_AI_SESSION=agent-0123456789ab
-kde-ai window list --json
-kde-ai input key WINDOW_UUID CTRL+S --json
+export KDE_DESKTOP_SESSION=agent-0123456789ab
+kde-desktop window list --json
+kde-desktop input key WINDOW_UUID CTRL+S --json
 ```
 
 An explicit `--session` overrides the environment. If the selected private
@@ -93,7 +95,7 @@ own environment value or, especially when sharing an MCP server, pass each
 managed session ID explicitly. Session lifecycle commands (`session create`,
 `list`, `show`, `use`, `stop`, and `launch`) remain under `session`.
 
-`KDE_AI_SESSION` and `session use` select process-wide/persisted defaults; they
+`KDE_DESKTOP_SESSION` and `session use` select process-wide/persisted defaults; they
 are not per-agent ownership mechanisms. Concurrent session creation now
 serializes the first-default claim, but shared MCP clients should still pass
 explicit IDs instead of changing or relying on that default.
@@ -101,17 +103,17 @@ explicit IDs instead of changing or relying on that default.
 The common window commands are:
 
 ```bash
-kde-ai --session "$TARGET" window list --json
-kde-ai --session "$TARGET" window find --app-id org.kde.kate --title notes --json
-kde-ai --session "$TARGET" window wait --app-id org.kde.kate --title notes --timeout 10 --json
-kde-ai --session "$TARGET" window inspect WINDOW_UUID --json
-kde-ai --session "$TARGET" window activate WINDOW_UUID --json
-kde-ai --session "$TARGET" input key WINDOW_UUID CTRL+END --json
-kde-ai --session "$TARGET" input type WINDOW_UUID $'\nTODO' --json
-kde-ai --session "$TARGET" input click WINDOW_UUID 0.92 0.90 --json
-kde-ai --session "$TARGET" display list --json
-kde-ai --session "$TARGET" screenshot --output /tmp/after.png --json
-kde-ai --session "$TARGET" capabilities --json
+kde-desktop --session "$TARGET" window list --json
+kde-desktop --session "$TARGET" window find --app-id org.kde.kate --title notes --json
+kde-desktop --session "$TARGET" window wait --app-id org.kde.kate --title notes --timeout 10 --json
+kde-desktop --session "$TARGET" window inspect WINDOW_UUID --json
+kde-desktop --session "$TARGET" window activate WINDOW_UUID --json
+kde-desktop --session "$TARGET" input key WINDOW_UUID CTRL+END --json
+kde-desktop --session "$TARGET" input type WINDOW_UUID $'\nTODO' --json
+kde-desktop --session "$TARGET" input click WINDOW_UUID 0.92 0.90 --json
+kde-desktop --session "$TARGET" display list --json
+kde-desktop --session "$TARGET" screenshot --output /tmp/after.png --json
+kde-desktop --session "$TARGET" capabilities --json
 ```
 
 `window find` takes an exact `--app-id` and/or a case-insensitive `--title`
@@ -144,7 +146,7 @@ For a private target, launch it there first with `session launch`.
 The workflow is deliberately split: inspect a fresh full-output screenshot and
 confirm the target/control before running the input phase. Run both phases in
 the same interactive Bash shell so the selected target and window ID remain set.
-`kde-ai screenshot` returns a file path; use the MCP screenshot tool if the agent
+`kde-desktop screenshot` returns a file path; use the MCP screenshot tool if the agent
 needs the image delivered as image content.
 
 ```bash
@@ -156,7 +158,7 @@ APP_ID='org.example.Player'
 # Phase 1: inspect. Requires jq.
 set -euo pipefail
 
-CAPABILITIES="$(kde-ai --session "$TARGET" capabilities --json)"
+CAPABILITIES="$(kde-desktop --session "$TARGET" capabilities --json)"
 jq -e '
   .data.capabilities["window.find"] == true and
   .data.capabilities["window.activate"] == true and
@@ -166,14 +168,14 @@ jq -e '
   exit 2
 }
 
-WINDOW_JSON="$(kde-ai --session "$TARGET" window find --app-id "$APP_ID" --json)"
+WINDOW_JSON="$(kde-desktop --session "$TARGET" window find --app-id "$APP_ID" --json)"
 jq -e '.data.window.fullscreen == true' <<<"$WINDOW_JSON" >/dev/null || {
   echo "The unique matching window is not fullscreen; no input sent." >&2
   exit 2
 }
 WINDOW_ID="$(jq -er '.data.window.window_id' <<<"$WINDOW_JSON")"
-BEFORE="/tmp/kde-ai-player-before-$$.png"
-kde-ai --session "$TARGET" screenshot --output "$BEFORE" --json
+BEFORE="/tmp/kde-desktop-player-before-$$.png"
+kde-desktop --session "$TARGET" screenshot --output "$BEFORE" --json
 printf 'Inspect %s and window %s before continuing.\n' "$BEFORE" "$WINDOW_ID"
 ```
 
@@ -187,12 +189,12 @@ focus change before continuing.
 ```bash
 : "${CLICK_X:?Set CLICK_X to the calibrated normalized x coordinate}"
 : "${CLICK_Y:?Set CLICK_Y to the calibrated normalized y coordinate}"
-ACTIVATION="$(kde-ai --session "$TARGET" window activate "$WINDOW_ID" --json)"
+ACTIVATION="$(kde-desktop --session "$TARGET" window activate "$WINDOW_ID" --json)"
 jq -e '.data.active_window_verified == true' <<<"$ACTIVATION" >/dev/null
-INPUT="$(kde-ai --session "$TARGET" input click "$WINDOW_ID" "$CLICK_X" "$CLICK_Y" --json)"
+INPUT="$(kde-desktop --session "$TARGET" input click "$WINDOW_ID" "$CLICK_X" "$CLICK_Y" --json)"
 printf '%s\n' "$INPUT"
-AFTER="/tmp/kde-ai-player-after-$$.png"
-kde-ai --session "$TARGET" screenshot --output "$AFTER" --json
+AFTER="/tmp/kde-desktop-player-after-$$.png"
+kde-desktop --session "$TARGET" screenshot --output "$AFTER" --json
 printf 'Inspect %s or other app state to verify the effect.\n' "$AFTER"
 ```
 
@@ -244,15 +246,15 @@ control; the API never silently chooses the first player:
 
 ```bash
 # Use --session user-desktop only to inspect/control players on the live desktop.
-kde-ai --session user-desktop media list --json
+kde-desktop --session user-desktop media list --json
 
 # Replace this with one exact name returned by media list.
 PLAYER='firefox.instance123'
-kde-ai --session user-desktop media inspect "$PLAYER" --json
+kde-desktop --session user-desktop media inspect "$PLAYER" --json
 
 # Typed transport controls; seek is a relative offset in seconds (negative rewinds).
-kde-ai --session user-desktop media control "$PLAYER" pause --json
-kde-ai --session user-desktop media control "$PLAYER" seek --seconds -15 --json
+kde-desktop --session user-desktop media control "$PLAYER" pause --json
+kde-desktop --session user-desktop media control "$PLAYER" seek --seconds -15 --json
 ```
 
 Inspection returns playback status, available title/artist/album metadata,
@@ -273,15 +275,15 @@ installed; `audio list` checks whether the live server is usable:
 
 ```bash
 # Inspect defaults, outputs (sinks), inputs (sources), and current output streams.
-kde-ai --session user-desktop audio list --json
+kde-desktop --session user-desktop audio list --json
 
 # Use exact device names from audio list. sink means output; source means input.
-kde-ai --session user-desktop audio set-default sink 'alsa_output.headphones' --json
-kde-ai --session user-desktop audio set-volume source 'alsa_input.usb_mic' 50 --json
-kde-ai --session user-desktop audio set-mute source 'alsa_input.usb_mic' mute --json
+kde-desktop --session user-desktop audio set-default sink 'alsa_output.headphones' --json
+kde-desktop --session user-desktop audio set-volume source 'alsa_input.usb_mic' 50 --json
+kde-desktop --session user-desktop audio set-mute source 'alsa_input.usb_mic' mute --json
 
 # Move just one listed output stream; the ID and application name are both checked.
-kde-ai --session user-desktop audio route-stream 42 'alsa_output.headphones' \
+kde-desktop --session user-desktop audio route-stream 42 'alsa_output.headphones' \
   --application Firefox --process-id 1234 --json
 ```
 
@@ -298,18 +300,18 @@ The stdio MCP server exposes the same window, input, display, MPRIS media,
 PipeWire audio, screenshot, and capability operations, plus private-session
 lifecycle tools.
 Install the project with `uv sync`, then configure your MCP client to launch
-`kde-ai-mcp` from this checkout:
+`kde-desktop-mcp` from this checkout:
 
 ```json
 {
   "mcpServers": {
-    "kde-ai": {
+    "kde-desktop": {
       "command": "uv",
       "args": [
         "run",
         "--directory",
-        "/absolute/path/to/kde-interation-ai",
-        "kde-ai-mcp"
+        "/absolute/path/to/kde-desktop-automation",
+        "kde-desktop-mcp"
       ]
     }
   }
@@ -319,7 +321,7 @@ Install the project with `uv sync`, then configure your MCP client to launch
 Every MCP desktop tool requires a `session` argument in its input schema. Pass a
 managed session ID returned by `kde_session_create`, or pass the exact string
 `user-desktop` when deliberately selecting the physical desktop. CLI defaults
-and `KDE_AI_SESSION` do not select MCP targets; `kde_session_use` changes a
+and `KDE_DESKTOP_SESSION` do not select MCP targets; `kde_session_use` changes a
 persisted CLI default only. This explicit per-call selector prevents accidental
 cross-session use but is not an authorization boundary. Existing MCP callers
 that omitted `session` must be updated; CLI default-session behavior is unchanged.
@@ -387,8 +389,8 @@ Optional backend smoke tests are deliberately opt-in. The live-desktop test only
 lists and inspects windows; it sends no input:
 
 ```bash
-KDE_AI_RUN_KWIN_INTEGRATION=1 uv run pytest tests/test_kwin_integration.py -q
-KDE_AI_RUN_USER_DESKTOP_INTEGRATION=1 uv run pytest tests/test_user_desktop_integration.py -q
+KDE_DESKTOP_RUN_KWIN_INTEGRATION=1 uv run pytest tests/test_kwin_integration.py -q
+KDE_DESKTOP_RUN_USER_DESKTOP_INTEGRATION=1 uv run pytest tests/test_user_desktop_integration.py -q
 ```
 
 The package uses a `src/` layout. CLI and MCP transports should call the same

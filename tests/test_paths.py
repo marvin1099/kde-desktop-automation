@@ -2,8 +2,8 @@ import stat
 
 import pytest
 
-from kde_interaction.errors import InteractionError
-from kde_interaction.paths import RuntimePaths
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.paths import RuntimePaths
 
 
 def test_runtime_paths_create_private_directories(tmp_path) -> None:

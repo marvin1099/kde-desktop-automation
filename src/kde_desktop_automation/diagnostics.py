@@ -5,9 +5,9 @@ import os
 import shutil
 from typing import Any
 
-from kde_interaction import __version__
-from kde_interaction.backends.user_desktop import user_desktop_environment_issue
-from kde_interaction.process import pidfd_supported
+from kde_desktop_automation import __version__
+from kde_desktop_automation.backends.user_desktop import user_desktop_environment_issue
+from kde_desktop_automation.process import pidfd_supported
 
 _TOOLS = (
     "kwin_wayland",

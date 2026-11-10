@@ -4,8 +4,8 @@ from typing import Any
 
 import pytest
 
-from kde_interaction.errors import InteractionError
-from kde_interaction.operations import DesktopOperations
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.operations import DesktopOperations
 
 
 class FakeManager:
@@ -46,7 +46,7 @@ class FakeUserDesktop:
 
 
 def test_private_default_target_is_resolved_without_live_desktop_fallback(monkeypatch) -> None:
-    monkeypatch.delenv("KDE_AI_SESSION", raising=False)
+    monkeypatch.delenv("KDE_DESKTOP_SESSION", raising=False)
     manager = FakeManager()
     live_desktop = FakeUserDesktop()
 
@@ -62,7 +62,7 @@ def test_private_default_target_is_resolved_without_live_desktop_fallback(monkey
 
 
 def test_missing_private_default_fails_closed(monkeypatch) -> None:
-    monkeypatch.delenv("KDE_AI_SESSION", raising=False)
+    monkeypatch.delenv("KDE_DESKTOP_SESSION", raising=False)
     manager = FakeManager(default=None)
     live_desktop = FakeUserDesktop()
 
@@ -77,7 +77,7 @@ def test_missing_private_default_fails_closed(monkeypatch) -> None:
 
 
 def test_explicit_live_target_never_constructs_private_manager(monkeypatch) -> None:
-    monkeypatch.setenv("KDE_AI_SESSION", "agent-111111111111")
+    monkeypatch.setenv("KDE_DESKTOP_SESSION", "agent-111111111111")
     live_desktop = FakeUserDesktop()
 
     def unexpected_manager_factory():
@@ -95,7 +95,7 @@ def test_explicit_live_target_never_constructs_private_manager(monkeypatch) -> N
 
 
 def test_environment_session_overrides_private_default(monkeypatch) -> None:
-    monkeypatch.setenv("KDE_AI_SESSION", "agent-222222222222")
+    monkeypatch.setenv("KDE_DESKTOP_SESSION", "agent-222222222222")
     manager = FakeManager(default="agent-111111111111")
 
     operations = DesktopOperations(manager=manager)  # type: ignore[arg-type]
@@ -106,7 +106,7 @@ def test_environment_session_overrides_private_default(monkeypatch) -> None:
 
 
 def test_explicit_private_session_overrides_environment_session(monkeypatch) -> None:
-    monkeypatch.setenv("KDE_AI_SESSION", "agent-111111111111")
+    monkeypatch.setenv("KDE_DESKTOP_SESSION", "agent-111111111111")
     manager = FakeManager()
 
     operations = DesktopOperations("agent-222222222222", manager=manager)  # type: ignore[arg-type]
@@ -117,7 +117,7 @@ def test_explicit_private_session_overrides_environment_session(monkeypatch) -> 
 
 
 def test_environment_cannot_persistently_select_live_desktop(monkeypatch) -> None:
-    monkeypatch.setenv("KDE_AI_SESSION", "user-desktop")
+    monkeypatch.setenv("KDE_DESKTOP_SESSION", "user-desktop")
     manager = FakeManager()
     live_desktop = FakeUserDesktop()
 
@@ -129,6 +129,17 @@ def test_environment_cannot_persistently_select_live_desktop(monkeypatch) -> Non
 
     assert error.value.code == "user_desktop_requires_explicit_selection"
     assert live_desktop.calls == []
+
+
+def test_environment_session_selects_target(monkeypatch) -> None:
+    monkeypatch.setenv("KDE_DESKTOP_SESSION", "agent-333333333333")
+    manager = FakeManager(default="agent-111111111111")
+
+    operations = DesktopOperations(manager=manager)  # type: ignore[arg-type]
+    result = operations.window_list()
+
+    assert result["target"] == {"kind": "agent-session", "session_id": "agent-333333333333"}
+    assert manager.calls == [("list_windows", "agent-333333333333")]
 
 
 def test_private_capabilities_fail_when_selected_default_is_stopped() -> None:

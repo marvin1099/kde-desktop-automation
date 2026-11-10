@@ -4,13 +4,13 @@ import os
 
 import pytest
 
-from kde_interaction.backends.user_desktop import UserDesktopBackend
+from kde_desktop_automation.backends.user_desktop import UserDesktopBackend
 
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
-        os.environ.get("KDE_AI_RUN_USER_DESKTOP_INTEGRATION") != "1",
-        reason="set KDE_AI_RUN_USER_DESKTOP_INTEGRATION=1 to inspect the live user desktop",
+        os.environ.get("KDE_DESKTOP_RUN_USER_DESKTOP_INTEGRATION") != "1",
+        reason="set KDE_DESKTOP_RUN_USER_DESKTOP_INTEGRATION=1 to inspect the live user desktop",
     ),
 ]
 

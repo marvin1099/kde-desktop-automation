@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from kde_interaction.backends.kwin_window_management import _Window, normalize_window_id
-from kde_interaction.errors import InteractionError
+from kde_desktop_automation.backends.kwin_window_management import _Window, normalize_window_id
+from kde_desktop_automation.errors import InteractionError
 
 WINDOW_ID = "b5ff2329-3976-4c31-bf31-1538cb97c8f0"
 

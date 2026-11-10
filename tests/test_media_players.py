@@ -4,9 +4,9 @@ from collections.abc import Mapping, Sequence
 
 import pytest
 
-from kde_interaction.backends.media_players import MprisBackend
-from kde_interaction.errors import InteractionError
-from kde_interaction.process import CommandResult
+from kde_desktop_automation.backends.media_players import MprisBackend
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.process import CommandResult
 
 TARGET = {"kind": "user-desktop"}
 
@@ -20,7 +20,7 @@ def _fake_backend(
 ) -> tuple[MprisBackend, list[tuple[str, ...]]]:
     calls: list[tuple[str, ...]] = []
     monkeypatch.setattr(
-        "kde_interaction.backends.media_players.require_executable",
+        "kde_desktop_automation.backends.media_players.require_executable",
         lambda _name: "/usr/bin/playerctl",
     )
 
@@ -53,7 +53,9 @@ def _fake_backend(
             return CommandResult(tuple(argv), 0, "", "")
         raise AssertionError(f"Unexpected playerctl command for {player}: {operation}")
 
-    monkeypatch.setattr("kde_interaction.backends.media_players.run_command", fake_run_command)
+    monkeypatch.setattr(
+        "kde_desktop_automation.backends.media_players.run_command", fake_run_command
+    )
     return MprisBackend({"DBUS_SESSION_BUS_ADDRESS": "unix:path=/test/bus"}), calls
 
 

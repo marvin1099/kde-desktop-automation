@@ -1,7 +1,7 @@
 import pytest
 
-from kde_interaction.backends.displays import parse_display_list
-from kde_interaction.errors import InteractionError
+from kde_desktop_automation.backends.displays import parse_display_list
+from kde_desktop_automation.errors import InteractionError
 
 
 def test_display_parser_prefers_logical_geometry() -> None:

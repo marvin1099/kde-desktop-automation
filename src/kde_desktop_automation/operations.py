@@ -7,13 +7,13 @@ from math import isfinite
 from pathlib import Path
 from typing import Any, cast
 
-from kde_interaction.backends.media_players import MprisBackend
-from kde_interaction.backends.pipewire_audio import PipeWireAudioBackend
-from kde_interaction.backends.user_desktop import UserDesktopBackend
-from kde_interaction.errors import InteractionError
-from kde_interaction.paths import RuntimePaths
-from kde_interaction.process import find_executable
-from kde_interaction.sessions import SessionManager
+from kde_desktop_automation.backends.media_players import MprisBackend
+from kde_desktop_automation.backends.pipewire_audio import PipeWireAudioBackend
+from kde_desktop_automation.backends.user_desktop import UserDesktopBackend
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.paths import RuntimePaths
+from kde_desktop_automation.process import find_executable
+from kde_desktop_automation.sessions import SessionManager
 
 USER_DESKTOP = "user-desktop"
 _DISPLAY_COVERAGE_TOLERANCE = 2.0
@@ -43,11 +43,11 @@ class DesktopOperations:
         self._manager = manager or (manager_factory or self._default_manager)()
         selected = session
         if selected is None:
-            configured_session = os.environ.get("KDE_AI_SESSION")
+            configured_session = os.environ.get("KDE_DESKTOP_SESSION")
             if configured_session == USER_DESKTOP:
                 raise InteractionError(
                     "user_desktop_requires_explicit_selection",
-                    "KDE_AI_SESSION may select only a managed private session. "
+                    "KDE_DESKTOP_SESSION may select only a managed private session. "
                     "Select the live desktop explicitly with --session user-desktop "
                     "or session='user-desktop' in MCP.",
                 )
@@ -59,7 +59,7 @@ class DesktopOperations:
             if selected is None:
                 raise InteractionError(
                     "private_default_session_unset",
-                    "No private session is selected. Set KDE_AI_SESSION, configure a "
+                    "No private session is selected. Set KDE_DESKTOP_SESSION, configure a "
                     "private default, or pass a session ID (--session in CLI); live "
                     "desktop access always requires explicit selection.",
                 )

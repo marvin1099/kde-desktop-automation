@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from kde_interaction.errors import InteractionError
+from kde_desktop_automation.errors import InteractionError
 
 _FAKE_INPUT_INTERFACE = "org_kde_kwin_fake_input"
 _FAKE_INPUT_VERSION = 6

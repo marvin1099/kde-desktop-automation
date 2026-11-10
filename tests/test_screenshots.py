@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from kde_interaction.backends import screenshots
-from kde_interaction.backends.screenshots import _safe_output_parent
-from kde_interaction.errors import InteractionError
-from kde_interaction.process import CommandResult
+from kde_desktop_automation.backends import screenshots
+from kde_desktop_automation.backends.screenshots import _safe_output_parent
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.process import CommandResult
 
 
 def _png_chunk(chunk_type: bytes, data: bytes) -> bytes:

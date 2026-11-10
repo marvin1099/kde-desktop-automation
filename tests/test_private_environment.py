@@ -1,5 +1,5 @@
-from kde_interaction.backends.kwin_virtual import build_private_environment
-from kde_interaction.paths import SessionPaths
+from kde_desktop_automation.backends.kwin_virtual import build_private_environment
+from kde_desktop_automation.paths import SessionPaths
 
 
 def test_private_environment_does_not_inherit_host_desktop_or_secrets(tmp_path) -> None:
@@ -23,12 +23,12 @@ def test_private_environment_does_not_inherit_host_desktop_or_secrets(tmp_path) 
 
     env = build_private_environment(
         paths=paths,
-        wayland_display="kde-ai-private",
+        wayland_display="kde-desktop-private",
         dbus_address="unix:path=/private/bus",
         environ=host_env,
     )
 
-    assert env["WAYLAND_DISPLAY"] == "kde-ai-private"
+    assert env["WAYLAND_DISPLAY"] == "kde-desktop-private"
     assert env["DBUS_SESSION_BUS_ADDRESS"] == "unix:path=/private/bus"
     assert env["XDG_RUNTIME_DIR"] == str(paths.runtime_dir)
     assert env["HOME"] == str(paths.home_dir)

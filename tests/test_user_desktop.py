@@ -6,10 +6,10 @@ from typing import Any
 
 import pytest
 
-from kde_interaction.backends import user_desktop
-from kde_interaction.backends.kwin_input import InputReceipt
-from kde_interaction.errors import InteractionError
-from kde_interaction.process import CommandResult
+from kde_desktop_automation.backends import user_desktop
+from kde_desktop_automation.backends.kwin_input import InputReceipt
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.process import CommandResult
 
 WINDOW_ID = "8a415edd-10b8-4f26-a074-b341938128d7"
 OTHER_WINDOW_ID = "772c92c6-7f71-4ae2-b9bb-a946b62f00c1"
@@ -112,12 +112,13 @@ def test_live_desktop_environment_rejects_private_sessions(tmp_path: Path) -> No
         )
         is None
     )
-    assert (
-        user_desktop.user_desktop_environment_issue(
-            environment | {"KDE_AI_PROCESS_MARKER": "agent-123456789abc"}
+    for marker in user_desktop._PRIVATE_PROCESS_MARKERS:
+        assert (
+            user_desktop.user_desktop_environment_issue(
+                environment | {marker: "agent-123456789abc"}
+            )
+            == "This process belongs to a managed private session, not the user desktop."
         )
-        == "This process belongs to a managed private session, not the user desktop."
-    )
     assert (
         user_desktop.user_desktop_environment_issue(environment | {"XDG_SESSION_TYPE": "x11"})
         == "Live user-desktop interaction currently requires a KDE Wayland session."

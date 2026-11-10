@@ -14,13 +14,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from kde_interaction.backends.displays import DisplayInfo
-from kde_interaction.backends.kwin_input import InputReceipt
-from kde_interaction.backends.kwin_virtual import KWinVirtualBackend
-from kde_interaction.errors import InteractionError
-from kde_interaction.models import ProcessIdentity, SessionRecord
-from kde_interaction.paths import RuntimePaths, validate_session_id
-from kde_interaction.window_selection import find_one_window
+from kde_desktop_automation.backends.displays import DisplayInfo
+from kde_desktop_automation.backends.kwin_input import InputReceipt
+from kde_desktop_automation.backends.kwin_virtual import KWinVirtualBackend
+from kde_desktop_automation.errors import InteractionError
+from kde_desktop_automation.models import ProcessIdentity, SessionRecord
+from kde_desktop_automation.paths import RuntimePaths, validate_session_id
+from kde_desktop_automation.window_selection import find_one_window
 
 _NAME = re.compile(r"^[\w .-]{1,64}$", flags=re.UNICODE)
 _MAX_OUTPUT_PIXELS = 16_777_216

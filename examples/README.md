@@ -1,6 +1,6 @@
 # Composing GUI automation scripts
 
-`kde-ai` is a set of target-explicit CLI building blocks. Bash (or another
+`kde-desktop` is a set of target-explicit CLI building blocks. Bash (or another
 script) can combine window discovery, bounded waits, inspection, input, and
 screenshots into a task-specific workflow. A fullscreen speedrun timer is one
 example; the same pattern can wait for an editor, check a dialog, or verify a
@@ -26,14 +26,14 @@ The timeout is bounded, and `--json` makes the result easy to compose:
 
 ```bash
 # Wait up to 15 seconds for the exact app ID and a title containing "notes".
-READY="$(kde-ai --session "$TARGET" window wait \
+READY="$(kde-desktop --session "$TARGET" window wait \
     --app-id "$APP_ID" --title notes --timeout 15 --json)"
 
 # Keep the stable, session-scoped window UUID for subsequent operations.
 WINDOW_ID="$(jq -er '.data.window.window_id' <<<"$READY")"
 
 # Re-inspect immediately before acting; a window may have changed or closed.
-CURRENT="$(kde-ai --session "$TARGET" window inspect "$WINDOW_ID" --json)"
+CURRENT="$(kde-desktop --session "$TARGET" window inspect "$WINDOW_ID" --json)"
 jq -e --arg app_id "$APP_ID" \
     '.data.window.app_id == $app_id' <<<"$CURRENT" >/dev/null
 ```
@@ -51,15 +51,15 @@ receipts report submission, not proof that the application processed the event.
 
 ```bash
 # Activation is explicit; input does not implicitly choose or activate a window.
-ACTIVATION="$(kde-ai --session "$TARGET" window activate "$WINDOW_ID" --json)"
+ACTIVATION="$(kde-desktop --session "$TARGET" window activate "$WINDOW_ID" --json)"
 jq -e '.data.active_window_verified == true' <<<"$ACTIVATION" >/dev/null
 
 # Example action for a known editor window. Adapt this to the app and task.
-kde-ai --session "$TARGET" input key "$WINDOW_ID" CTRL+S --json
+kde-desktop --session "$TARGET" input key "$WINDOW_ID" CTRL+S --json
 
 # Capture new state after the action; verify the result independently.
 AFTER="$(mktemp --suffix=.png)"
-kde-ai --session "$TARGET" screenshot --output "$AFTER" --json
+kde-desktop --session "$TARGET" screenshot --output "$AFTER" --json
 printf 'Inspect screenshot: %s\n' "$AFTER"
 ```
 
@@ -74,11 +74,11 @@ or geometry that covers a logical display:
 
 ```bash
 # KWin fullscreen state; unknown state does not count as fullscreen.
-kde-ai --session "$TARGET" window wait \
+kde-desktop --session "$TARGET" window wait \
     --app-id org.example.Game --fullscreen --timeout 60 --json
 
 # Alternative for a borderless game whose window covers the display.
-kde-ai --session "$TARGET" window wait \
+kde-desktop --session "$TARGET" window wait \
     --app-id org.example.Game --fills-display --timeout 60 --json
 ```
 
@@ -92,10 +92,10 @@ same ID, then launch the timer as an argv array:
 
 ```bash
 GAME_APP_ID='org.example.Game'
-READY="$(kde-ai --session "$TARGET" window wait \
+READY="$(kde-desktop --session "$TARGET" window wait \
     --app-id "$GAME_APP_ID" --fullscreen --timeout 60 --json)"
 WINDOW_ID="$(jq -er '.data.window.window_id' <<<"$READY")"
-CURRENT="$(kde-ai --session "$TARGET" window inspect "$WINDOW_ID" --json)"
+CURRENT="$(kde-desktop --session "$TARGET" window inspect "$WINDOW_ID" --json)"
 
 # Fail closed if the window closed, changed identity, or left fullscreen.
 jq -e --arg app_id "$GAME_APP_ID" --arg window_id "$WINDOW_ID" \
@@ -105,7 +105,7 @@ jq -e --arg app_id "$GAME_APP_ID" --arg window_id "$WINDOW_ID" \
 
 # Arrays preserve spaces and shell metacharacters as literal arguments; never eval.
 timer=(speedrun-timer --start --category 'Any% No Major Glitches')
-export KDE_AI_TARGET="$TARGET" KDE_AI_WINDOW_ID="$WINDOW_ID"
+export KDE_DESKTOP_TARGET="$TARGET" KDE_DESKTOP_WINDOW_ID="$WINDOW_ID"
 exec "${timer[@]}"
 ```
 
