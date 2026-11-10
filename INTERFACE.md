@@ -301,6 +301,12 @@ targets revalidate the calling process's Wayland context on each invocation;
 persistent attach mode. The command syntax matches, while target scope and
 capabilities remain explicit in result envelopes.
 
+The following block is a **proposed future CLI sketch, not runnable with the
+current implementation**. In particular, `observe`, window placement, display
+configuration, window screenshots, and semantic notification/application
+commands shown here are not implemented. See “What the current implementation
+can do” below for the executable subset.
+
 ```text
 kde-ai observe [--target session|window:REF|desktop:REF|display:REF] [--format json]
 kde-ai observe --include interaction-context [--format json]
@@ -551,81 +557,75 @@ discovery, ambiguous app windows, cross-display placement, user-facing input,
 an external side effect in a web app, notification policy, and a no-data-loss
 constraint.
 
-### How an agent should approach it
+### What the current implementation can do
 
-1. **Inspect the whole session before acting.** Request a compact observation
-   containing session type, displays and their layouts/scales, virtual desktops,
-   windows, modal/transient relationships, and input context. The input context
-   must say which window has keyboard focus, where the pointer is (including
-   which display), which input backend is active, and how that backend routes
-   input. “Current display” is not a sufficient field: on a multi-display
-   desktop, keyboard focus and pointer display can differ.
-2. **Resolve the requested windows.** Find editor and terminal windows by app
-   ID, and candidate Firefox windows by app ID/title. If multiple Firefox
-   windows match, do not choose the active one just because it is active. Take
-   screenshots of the candidates and inspect the page identity. A screenshot
-   result must be delivered to the model as image content (or through a host
-   image-reading tool), not merely returned as an inaccessible filesystem path.
-3. **Check the safety constraint.** Window metadata cannot generally tell
-   whether an editor has unsaved changes. The agent should not infer “saved”
-   from the title bar. It can leave windows open and avoid close/discard actions;
-   if it must interact with a save prompt, the dialog is a stop-and-ask case.
-4. **Plan the layout.** Use explicit display references and display-relative
-   placement with a named anchor. Keep the editor and terminal on the laptop
-   output, place Firefox on the external output, and do not change display mode
-   unless the user asked for that. Re-read window geometry after moves because
-   KWin may clamp, maximize, or otherwise constrain placement.
-5. **Check what can be automated before touching the ticket.** If a UI element
-   tree is available, find the exact bug page and named controls and invoke
-   supported actions. Without it, inspect a fresh screenshot, click using
-   screenshot-to-window coordinate mapping, and verify after every meaningful
-   step. Do not type into “the Firefox window” until the interface confirms
-   which window actually owns keyboard focus; a modal dialog or browser prompt
-   may have taken it. If the page identity or control is not clear, stop as
-   requested.
-6. **Treat the ticket update as an external side effect.** The user explicitly
-   authorized the requested status and note. Still verify the exact bug ID and
-   read back the resulting status/comment. A successful click or keystroke is
-   not proof that the web application accepted the change.
-7. **Handle notification policy as its own capability.** Check whether a
-   supported Plasma Do Not Disturb action exists. If not, report it as
-   unsupported instead of guessing at a settings UI. Do not silently claim the
-   request is complete because the other steps succeeded.
-8. **Capture and report the final state.** Observe again, verify placement and
-   ticket state, capture the requested desktop screenshot, and report each
-   requested item as completed, failed, or not attempted—with reasons. The
-   screenshot should be attached to the response when the transport supports
-   images.
+The principles above are the safe way to approach the task, not a claim that the
+current CLI can complete it. The implemented read/interaction subset is
+capability-scoped: list/find/wait/inspect/activate windows, list displays,
+capture a **full selected output** screenshot, and submit active-window-guarded
+key/text/click input. Use an explicit target in scripts. For a shared MCP server,
+pass the private session ID on each call; pass `user-desktop` only when explicitly
+choosing the physical desktop.
 
-### Example interaction trace
-
-The exact output is backend-dependent, but the intended shape is roughly:
+Run these commands in the same interactive Bash shell, replacing the example
+session ID and app IDs with values from the selected target. Set
+`TARGET='user-desktop'` only when explicitly opting into the physical desktop;
+otherwise use a managed private session ID. Inspect every result. A `window
+find` ambiguity is an error with candidate metadata, not a selection. The
+screenshot is the whole output, not a per-window capture. In MCP,
+`kde_screenshot` returns that image as content; the CLI writes it to the path.
+For a private target, first create a running session and launch any apps inside
+it; the commands below cannot see host windows. Its home/browser profile is
+separate from the host's, so do not assume the ticket site is already signed in.
 
 ```sh
-kde-ai observe --include displays,desktops,windows,interaction-context,capabilities --format json
-kde-ai window list --desktop all --format json
-kde-ai screenshot --target window:firefox-candidate-1 --output /tmp/firefox-1.png
-kde-ai screenshot --target window:firefox-candidate-2 --output /tmp/firefox-2.png
-# Agent inspects both images and selects the one showing bug 123456.
-kde-ai window move --target window:editor --to display:laptop --at 0.05,0.05 --space display --anchor top-left
-kde-ai window move --target window:terminal --to display:laptop --at 0.05,0.52 --space display --anchor top-left
-kde-ai window move --target window:firefox-bug-123456 --to display:external --at 0.05,0.05 --space display --anchor top-left
-kde-ai observe --target session --format json
-# If an accessibility provider exists, use its named controls; otherwise use
-# a fresh screenshot and explicit window-relative clicks, verifying each step.
-kde-ai screenshot --target window:firefox-bug-123456 --output /tmp/bug-page.png
-# ...select the status control, verify the chosen status, enter the note,
-# submit, then re-observe and verify the page state...
-kde-ai observe --target session --format json
-kde-ai screenshot --target session --output /tmp/triage-layout.png
+TARGET='agent-0123456789ab'
+kde-ai --session "$TARGET" capabilities --json
+kde-ai --session "$TARGET" display list --json
+kde-ai --session "$TARGET" window list --json
+kde-ai --session "$TARGET" window find --app-id org.kde.kate --json
+kde-ai --session "$TARGET" window find --app-id org.kde.konsole --json
+kde-ai --session "$TARGET" window find --app-id org.mozilla.firefox --title 123456 --json
+kde-ai --session "$TARGET" screenshot --output "/tmp/kde-ai-triage-before-$$.png" --json
 ```
 
-This trace exposes an important boundary: the current CLI proposal has no
-application-level control for Plasma notification mode, no reliable UI-element
-tree, and no explicit “wait until the page reflects this state” operation.
-Those should be reported as capability gaps rather than disguised as generic
-click support. The task may therefore finish partially: layout and screenshot
-can succeed while DND or the ticket update remains unverified.
+After identifying one exact window and reviewing a fresh screenshot, these are
+the current input command forms. The UUID and coordinates are placeholders, not
+values to paste literally. For a ticket update, separately locate and verify the
+status control, the intended status option, the note field, and the submit
+control from fresh screenshots; the example below only shows syntax and cannot
+verify that any control or page state is correct.
+
+```sh
+kde-ai --session "$TARGET" window inspect FIREFOX_WINDOW_UUID --json
+kde-ai --session "$TARGET" window activate FIREFOX_WINDOW_UUID --json
+# Illustrative syntax only. Reinspect after each UI transition and replace each
+# coordinate with a point measured for the currently visible control.
+kde-ai --session "$TARGET" input click FIREFOX_WINDOW_UUID STATUS_CONTROL_X STATUS_CONTROL_Y --json
+kde-ai --session "$TARGET" input click FIREFOX_WINDOW_UUID IN_PROGRESS_OPTION_X IN_PROGRESS_OPTION_Y --json
+kde-ai --session "$TARGET" input click FIREFOX_WINDOW_UUID NOTE_FIELD_X NOTE_FIELD_Y --json
+kde-ai --session "$TARGET" input type FIREFOX_WINDOW_UUID 'Reproduced on Wayland.' --json
+# Verify the note/status visually before deciding to submit:
+kde-ai --session "$TARGET" input click FIREFOX_WINDOW_UUID SUBMIT_X SUBMIT_Y --json
+kde-ai --session "$TARGET" screenshot --output "/tmp/kde-ai-triage-after-$$.png" --json
+```
+
+These commands do **not** make the requested workflow achievable end-to-end:
+
+| Part of request | Live `user-desktop` | Hidden `agent-session` |
+| --- | --- | --- |
+| Inspect windows/displays and capture a screenshot | Yes, when live Wayland/KWin prerequisites are available; reads the real desktop | Yes, scoped to the private session and its virtual output |
+| Put windows on laptop and external displays | Not implemented: current CLI has no window move/placement operation | Not possible in this prototype: the managed session has its own virtual output, not the host's laptop/external displays; move is also unimplemented |
+| Change Plasma Do Not Disturb | Unsupported | Unsupported |
+| Update the ticket | Only generic coordinate input is available; no accessibility or app-level operation, and app state must be verified independently | Only if Firefox is launched and the page is available/authenticated in this session's separate profile; it does not operate on the host's existing Firefox window |
+| Preserve/verify unsaved work and ticket state | Unsaved state and app-level postconditions are not exposed | Same limitation; avoid closing windows and independently inspect the app |
+
+Thus the current safe result is a partial assessment: the agent can report
+observations, activate a confirmed window, and attempt carefully verified
+input. It must report layout changes and DND as unsupported, and stop if the bug
+page or control is ambiguous. A successful input receipt is not proof that the
+ticket was updated. The shell trace is a current CLI example, **not** a promise
+that the original multi-display triage request can be completed.
 
 ## Gaps exposed and proposed refinements
 

@@ -134,24 +134,73 @@ round trip is not proof the app received them. Receipts report this routing and
 leave `effect_verified: false` until a fresh screenshot or independent app/file
 state confirms the result.
 
-Example: use the same script against a hidden player session or the live desktop
-by changing only `TARGET`. Coordinates must be calibrated for the player UI:
+#### Targeted player example
+
+This example requires an explicit target. A private session ID selects a hidden
+KWin session; set `TARGET=user-desktop` only when you intentionally want to
+operate on the physical desktop. The app must already be running in that target.
+For a private target, launch it there first with `session launch`.
+
+The workflow is deliberately split: inspect a fresh full-output screenshot and
+confirm the target/control before running the input phase. Run both phases in
+the same interactive Bash shell so the selected target and window ID remain set.
+`kde-ai screenshot` returns a file path; use the MCP screenshot tool if the agent
+needs the image delivered as image content.
 
 ```bash
-TARGET="${1:-user-desktop}"
-APP_ID=org.example.Player
-WINDOW_JSON="$(kde-ai --session "$TARGET" window find --app-id "$APP_ID" --json)" || exit
-WINDOW_ID="$(jq -r '.data.window.window_id' <<<"$WINDOW_JSON")"
-if jq -e '.data.window.fullscreen == true' >/dev/null <<<"$WINDOW_JSON"; then
-  kde-ai --session "$TARGET" window activate "$WINDOW_ID" --json
-  kde-ai --session "$TARGET" input click "$WINDOW_ID" 0.92 0.90 --json
-fi
+# Set these explicitly in the same interactive Bash shell for both phases.
+# Replace the examples with a running session ID and the app's exact ID.
+TARGET='agent-0123456789ab'
+APP_ID='org.example.Player'
+
+# Phase 1: inspect. Requires jq.
+set -euo pipefail
+
+CAPABILITIES="$(kde-ai --session "$TARGET" capabilities --json)"
+jq -e '
+  .data.capabilities["window.find"] == true and
+  .data.capabilities["window.activate"] == true and
+  .data.capabilities["input.click"] == true
+' <<<"$CAPABILITIES" >/dev/null || {
+  echo "The selected target does not support the required window operations." >&2
+  exit 2
+}
+
+WINDOW_JSON="$(kde-ai --session "$TARGET" window find --app-id "$APP_ID" --json)"
+jq -e '.data.window.fullscreen == true' <<<"$WINDOW_JSON" >/dev/null || {
+  echo "The unique matching window is not fullscreen; no input sent." >&2
+  exit 2
+}
+WINDOW_ID="$(jq -er '.data.window.window_id' <<<"$WINDOW_JSON")"
+BEFORE="/tmp/kde-ai-player-before-$$.png"
+kde-ai --session "$TARGET" screenshot --output "$BEFORE" --json
+printf 'Inspect %s and window %s before continuing.\n' "$BEFORE" "$WINDOW_ID"
 ```
 
-This enables reusable AI-authored workflows, but the click is still coordinate
-based: there is not yet an accessibility tree that can address a control by its
-label (such as “Play All”). To keep this example private by default instead,
-pass a managed session ID rather than `user-desktop`.
+Only after confirming the screenshot and calibrating coordinates for this
+specific target, set `CLICK_X` and `CLICK_Y` in the same shell, then run the
+second phase. The block intentionally stops if they are unset. Do not assume
+private and live geometry have identical bounds.
+For live use, set `TARGET='user-desktop'` explicitly and authorize the resulting
+focus change before continuing.
+
+```bash
+: "${CLICK_X:?Set CLICK_X to the calibrated normalized x coordinate}"
+: "${CLICK_Y:?Set CLICK_Y to the calibrated normalized y coordinate}"
+ACTIVATION="$(kde-ai --session "$TARGET" window activate "$WINDOW_ID" --json)"
+jq -e '.data.active_window_verified == true' <<<"$ACTIVATION" >/dev/null
+INPUT="$(kde-ai --session "$TARGET" input click "$WINDOW_ID" "$CLICK_X" "$CLICK_Y" --json)"
+printf '%s\n' "$INPUT"
+AFTER="/tmp/kde-ai-player-after-$$.png"
+kde-ai --session "$TARGET" screenshot --output "$AFTER" --json
+printf 'Inspect %s or other app state to verify the effect.\n' "$AFTER"
+```
+
+`window find` fails on no match or ambiguity rather than selecting a window
+silently. Window input is active-focus-guarded, not atomically routed to the UUID;
+the click receipt remains `effect_verified: false`. Inspect the post-action image
+or independent app state. There is no accessibility tree for controls such as
+“Play All,” so if the UI or target is ambiguous, stop instead of guessing.
 
 ### MCP server
 
