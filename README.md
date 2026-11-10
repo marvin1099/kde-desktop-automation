@@ -202,7 +202,7 @@ the click receipt remains `effect_verified: false`. Inspect the post-action imag
 or independent app state. There is no accessibility tree for controls such as
 “Play All,” so if the UI or target is ambiguous, stop instead of guessing.
 
-#### Start a timer when a game enters fullscreen
+#### Compose GUI operations into scripts
 
 `window wait` can wait for either KWin's reported fullscreen state or a window
 whose logical geometry covers a display (useful for borderless/fake-fullscreen
@@ -211,11 +211,15 @@ edge tolerance. Both conditions still require one unique app-ID/title match;
 unknown fullscreen state and ambiguous matches never count as success.
 
 The example wrapper waits in bounded 60-second intervals, re-inspects the same
-window before starting, and `exec`s the timer command as argv (no `eval`). Pass
-an exact app ID discovered from `window list`; `user-desktop` must be supplied
-explicitly to monitor the physical desktop. If more than one window has that
-app ID, pass `--title` and a distinguishing title substring; the wrapper fails
-on any remaining ambiguity:
+window before starting, and `exec`s the timer command as argv (no `eval`). This
+is one example of composing the CLI; scripts can use the same window wait,
+inspect, activation, input, and screenshot operations for other GUI workflows.
+See [script examples and commented snippets](examples/README.md) for patterns
+that wait for windows, check state, submit an action, and verify separately.
+Pass an exact app ID discovered from `window list`; `user-desktop` must be
+supplied explicitly to monitor the physical desktop. If more than one window
+has that app ID, pass `--title` and a distinguishing title substring; the
+wrapper fails on any remaining ambiguity:
 
 ```bash
 bash examples/start-timer-on-fullscreen.sh \
