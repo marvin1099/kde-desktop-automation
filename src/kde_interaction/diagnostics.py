@@ -18,6 +18,8 @@ _TOOLS = (
     "dotool",
     "kdocktor",
     "playerctl",
+    "wpctl",
+    "pactl",
 )
 
 

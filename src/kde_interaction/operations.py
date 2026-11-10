@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from kde_interaction.backends.media_players import MprisBackend
+from kde_interaction.backends.pipewire_audio import PipeWireAudioBackend
 from kde_interaction.backends.user_desktop import UserDesktopBackend
 from kde_interaction.errors import InteractionError
 from kde_interaction.paths import RuntimePaths
@@ -222,10 +223,12 @@ class DesktopOperations:
         )
 
     def capabilities(self) -> dict[str, Any]:
-        media_capabilities = _media_capabilities()
+        capabilities = _media_capabilities() | _audio_capabilities(
+            live_target=self._user_desktop is not None
+        )
         if self._user_desktop is not None:
             result = self._user_desktop.capabilities()
-            result["capabilities"] = result["capabilities"] | media_capabilities
+            result["capabilities"] = result["capabilities"] | capabilities
             return result
         session = self._private_manager().get_session(self._private_session_id())
         if session["status"] != "running":
@@ -236,7 +239,7 @@ class DesktopOperations:
             )
         return {
             "target": {"kind": "agent-session", "session_id": self._private_session_id()},
-            "capabilities": session["capabilities"] | media_capabilities,
+            "capabilities": session["capabilities"] | capabilities,
             "window_management_protocol_version": session["window_management_protocol_version"],
             "input_protocol_version": session["input_protocol_version"],
             "limitations": [
@@ -266,6 +269,53 @@ class DesktopOperations:
             seconds=seconds,
         )
 
+    def audio_list(self) -> dict[str, Any]:
+        return self._pipewire_audio_backend().list_audio(target=self._target())
+
+    def audio_set_default(self, direction: str, device_name: str) -> dict[str, Any]:
+        return self._pipewire_audio_backend().set_default(
+            direction,
+            device_name,
+            target=self._target(),
+        )
+
+    def audio_set_volume(
+        self,
+        direction: str,
+        device_name: str,
+        volume_percent: float,
+    ) -> dict[str, Any]:
+        return self._pipewire_audio_backend().set_volume(
+            direction,
+            device_name,
+            volume_percent,
+            target=self._target(),
+        )
+
+    def audio_set_mute(self, direction: str, device_name: str, muted: bool) -> dict[str, Any]:
+        return self._pipewire_audio_backend().set_mute(
+            direction,
+            device_name,
+            muted,
+            target=self._target(),
+        )
+
+    def audio_route_stream(
+        self,
+        stream_id: int,
+        sink_name: str,
+        *,
+        application_name: str,
+        process_id: int | None = None,
+    ) -> dict[str, Any]:
+        return self._pipewire_audio_backend().route_stream(
+            stream_id,
+            sink_name,
+            application_name=application_name,
+            process_id=process_id,
+            target=self._target(),
+        )
+
     def _private_manager(self) -> SessionManager:
         if self._manager is None:
             raise InteractionError("invalid_target", "No private session manager is selected.")
@@ -282,6 +332,16 @@ class DesktopOperations:
         else:
             environ = self._private_manager().runtime_environment(self._private_session_id())
         return MprisBackend(environ)
+
+    def _pipewire_audio_backend(self) -> PipeWireAudioBackend:
+        if self._user_desktop is None:
+            raise InteractionError(
+                "audio_requires_live_target",
+                "PipeWire audio operations are live-desktop only; explicitly select "
+                "--session user-desktop.",
+                details={"selected_session": self._session_id},
+            )
+        return PipeWireAudioBackend(self._user_desktop.environ)
 
     def _target(self) -> dict[str, str]:
         if self._user_desktop is not None:
@@ -348,4 +408,19 @@ def _media_capabilities() -> dict[str, bool]:
         "media.players": available,
         "media.inspect": available,
         "media.control": available,
+    }
+
+
+def _audio_capabilities(*, live_target: bool) -> dict[str, bool]:
+    available = (
+        live_target
+        and find_executable("wpctl") is not None
+        and find_executable("pactl") is not None
+    )
+    return {
+        "audio.devices": available,
+        "audio.default": available,
+        "audio.volume": available,
+        "audio.mute": available,
+        "audio.route_stream": available,
     }

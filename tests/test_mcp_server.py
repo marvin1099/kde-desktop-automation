@@ -51,6 +51,49 @@ class FakeOperations:
             "seconds": seconds,
         }
 
+    def audio_list(self) -> dict[str, Any]:
+        return {"target": {"kind": self.session}, "devices": {"sinks": [], "sources": []}}
+
+    def audio_set_default(self, direction: str, device_name: str) -> dict[str, Any]:
+        return {"target": {"kind": self.session}, "direction": direction, "device": device_name}
+
+    def audio_set_volume(
+        self,
+        direction: str,
+        device_name: str,
+        volume_percent: float,
+    ) -> dict[str, Any]:
+        return {
+            "target": {"kind": self.session},
+            "direction": direction,
+            "device": device_name,
+            "volume_percent": volume_percent,
+        }
+
+    def audio_set_mute(self, direction: str, device_name: str, muted: bool) -> dict[str, Any]:
+        return {
+            "target": {"kind": self.session},
+            "direction": direction,
+            "device": device_name,
+            "muted": muted,
+        }
+
+    def audio_route_stream(
+        self,
+        stream_id: int,
+        sink_name: str,
+        *,
+        application_name: str,
+        process_id: int | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "target": {"kind": self.session},
+            "stream_id": stream_id,
+            "sink_name": sink_name,
+            "application_name": application_name,
+            "process_id": process_id,
+        }
+
     def screenshot(self, output: Path, *, overwrite: bool = False) -> dict[str, Any]:
         del overwrite
         output.write_bytes(self.screenshot_png)
@@ -84,6 +127,11 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         "kde_media_list",
         "kde_media_inspect",
         "kde_media_control",
+        "kde_audio_list",
+        "kde_audio_set_default",
+        "kde_audio_set_volume",
+        "kde_audio_set_mute",
+        "kde_audio_route_stream",
         "kde_screenshot",
         "kde_capabilities",
     } <= names
@@ -109,6 +157,11 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         "kde_media_list",
         "kde_media_inspect",
         "kde_media_control",
+        "kde_audio_list",
+        "kde_audio_set_default",
+        "kde_audio_set_volume",
+        "kde_audio_set_mute",
+        "kde_audio_route_stream",
         "kde_screenshot",
         "kde_capabilities",
     }
@@ -130,6 +183,11 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         "previous",
         "seek",
     ]
+    audio_mute_tool = next(tool for tool in tools if tool.name == "kde_audio_set_mute")
+    assert {"session", "direction", "device_name", "muted"} <= set(
+        audio_mute_tool.inputSchema["properties"]
+    )
+    assert audio_mute_tool.inputSchema["properties"]["direction"]["enum"] == ["sink", "source"]
 
 
 def test_mcp_routes_real_desktop_only_when_explicitly_selected() -> None:
@@ -190,6 +248,34 @@ def test_mcp_media_control_requires_and_uses_explicit_session() -> None:
     assert FakeOperations.selected_sessions == [session_id]
 
 
+def test_mcp_audio_routing_requires_and_uses_explicit_live_target() -> None:
+    server = _server()
+
+    result = asyncio.run(
+        server.call_tool(
+            "kde_audio_route_stream",
+            {
+                "session": "user-desktop",
+                "stream_id": 17,
+                "sink_name": "headphones",
+                "application_name": "Firefox",
+                "process_id": 555,
+            },
+        )
+    )
+
+    assert isinstance(result, CallToolResult)
+    assert result.isError is False
+    assert result.structuredContent["data"] == {
+        "target": {"kind": "user-desktop"},
+        "stream_id": 17,
+        "sink_name": "headphones",
+        "application_name": "Firefox",
+        "process_id": 555,
+    }
+    assert FakeOperations.selected_sessions == ["user-desktop"]
+
+
 def test_mcp_screenshot_returns_png_image_and_metadata(tmp_path: Path) -> None:
     server = _server()
     output = tmp_path / "mcp-capture.png"
@@ -221,6 +307,7 @@ def test_mcp_instructions_state_live_desktop_safety() -> None:
     assert "not per-client authorization tokens" in instructions
     assert "kde_session_use" in instructions
     assert "player names must be selected explicitly" in instructions
+    assert "PipeWire audio tools are live-user-desktop only" in instructions
 
 
 def test_mcp_session_selector_is_not_implicit_for_any_server_mode() -> None:

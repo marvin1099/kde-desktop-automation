@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import typer
 from rich.console import Console
@@ -42,6 +42,9 @@ display_app = typer.Typer(help="Inspect displays in the selected session.", no_a
 media_app = typer.Typer(
     help="Inspect and control MPRIS media players in the selected session.", no_args_is_help=True
 )
+audio_app = typer.Typer(
+    help="Inspect and control live PipeWire audio devices and output streams.", no_args_is_help=True
+)
 app.add_typer(user_desktop_app, name="user-desktop")
 user_desktop_app.add_typer(user_window_app, name="window")
 user_desktop_app.add_typer(user_input_app, name="input")
@@ -49,6 +52,7 @@ app.add_typer(window_app, name="window")
 app.add_typer(input_app, name="input")
 app.add_typer(display_app, name="display")
 app.add_typer(media_app, name="media")
+app.add_typer(audio_app, name="audio")
 
 console = Console()
 
@@ -383,6 +387,100 @@ def control_media_player(
     """Submit one typed MPRIS transport request to one exact player."""
     _run(
         lambda: (_operations(ctx).media_control(player, action, seconds=seconds), []),
+        json_output=json_output,
+    )
+
+
+@audio_app.command("list")
+def list_audio(
+    ctx: Context,
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """List PipeWire sinks, sources, defaults, and active output streams."""
+    _run(lambda: (_operations(ctx).audio_list(), []), json_output=json_output)
+
+
+@audio_app.command("set-default")
+def set_audio_default(
+    ctx: Context,
+    direction: Literal["sink", "source"] = typer.Argument(
+        ..., help="sink for output or source for input."
+    ),
+    device_name: str = typer.Argument(..., help="Exact device name returned by audio list."),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Set the default output sink or input source and verify it by reading back."""
+    _run(
+        lambda: (_operations(ctx).audio_set_default(direction, device_name), []),
+        json_output=json_output,
+    )
+
+
+@audio_app.command("set-volume")
+def set_audio_volume(
+    ctx: Context,
+    direction: Literal["sink", "source"] = typer.Argument(
+        ..., help="sink for output or source for input."
+    ),
+    device_name: str = typer.Argument(..., help="Exact device name returned by audio list."),
+    volume_percent: float = typer.Argument(..., help="Absolute volume from 0 through 100 percent."),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Set an exact device's volume percentage and verify the effective level."""
+    _run(
+        lambda: (
+            _operations(ctx).audio_set_volume(direction, device_name, volume_percent),
+            [],
+        ),
+        json_output=json_output,
+    )
+
+
+@audio_app.command("set-mute")
+def set_audio_mute(
+    ctx: Context,
+    direction: Literal["sink", "source"] = typer.Argument(
+        ..., help="sink for output or source for input."
+    ),
+    device_name: str = typer.Argument(..., help="Exact device name returned by audio list."),
+    state: Literal["mute", "unmute"] = typer.Argument(..., help="Explicit mute state; no toggle."),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Set an exact device's mute state and verify it by reading back."""
+    _run(
+        lambda: (_operations(ctx).audio_set_mute(direction, device_name, state == "mute"), []),
+        json_output=json_output,
+    )
+
+
+@audio_app.command("route-stream")
+def route_audio_stream(
+    ctx: Context,
+    stream_id: int = typer.Argument(..., help="Fresh sink-input stream ID from audio list."),
+    sink_name: str = typer.Argument(..., help="Exact output sink name returned by audio list."),
+    application_name: str = typer.Option(
+        ...,
+        "--application",
+        help="Exact application name shown for this stream; guards against stale IDs.",
+    ),
+    process_id: int | None = typer.Option(
+        None,
+        "--process-id",
+        help="Optional expected process ID for an additional identity check.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Move only one verified output stream to another sink."""
+    _run(
+        lambda: (
+            _operations(ctx).audio_route_stream(
+                stream_id,
+                sink_name,
+                application_name=application_name,
+                process_id=process_id,
+            ),
+            [],
+        ),
         json_output=json_output,
     )
 

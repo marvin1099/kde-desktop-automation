@@ -140,3 +140,15 @@ def test_private_capabilities_fail_when_selected_default_is_stopped() -> None:
         operations.capabilities()
 
     assert error.value.code == "session_not_running"
+
+
+def test_private_capabilities_do_not_advertise_live_pipewire_controls() -> None:
+    operations = DesktopOperations(
+        "agent-123456789abc",
+        manager=FakeManager(),  # type: ignore[arg-type]
+    )
+
+    result = operations.capabilities()
+
+    assert result["capabilities"]["audio.devices"] is False
+    assert result["capabilities"]["audio.route_stream"] is False

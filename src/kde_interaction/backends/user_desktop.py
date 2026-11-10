@@ -344,6 +344,16 @@ class UserDesktopBackend:
                 "media.players": shutil.which("playerctl") is not None,
                 "media.inspect": shutil.which("playerctl") is not None,
                 "media.control": shutil.which("playerctl") is not None,
+                "audio.devices": shutil.which("wpctl") is not None
+                and shutil.which("pactl") is not None,
+                "audio.default": shutil.which("wpctl") is not None
+                and shutil.which("pactl") is not None,
+                "audio.volume": shutil.which("wpctl") is not None
+                and shutil.which("pactl") is not None,
+                "audio.mute": shutil.which("wpctl") is not None
+                and shutil.which("pactl") is not None,
+                "audio.route_stream": shutil.which("wpctl") is not None
+                and shutil.which("pactl") is not None,
             },
             "input_protocol_version": version,
             "input_semantics": {

@@ -57,6 +57,10 @@ targeted key/text/normalized click input, display list, screenshots, per-target
 capability reports, and MPRIS player list/inspect/control. Media operations use
 the selected target's D-Bus session and exact player names; they require
 `playerctl` and do not infer a player when several are present. The current
+live-desktop subset also includes PipeWire device/default inspection, verified
+default selection, volume/mute, and single-stream output routing. Audio controls
+require an explicit `user-desktop` target and a PipeWire Pulse compatibility
+server; private KWin sessions do not provide an isolated audio server. The
 launch commands accept executable argument vectors (never shell strings) and
 are not security boundaries; a future user-facing launcher should prefer
 validated desktop-entry IDs. Both backends' input remains best-effort: KWin
@@ -513,7 +517,9 @@ The stdio server exposes typed tools over `DesktopOperations`: `kde_window_list`
 `kde_window_find`, `kde_window_wait`, `kde_window_inspect`,
 `kde_window_activate`, `kde_input_key`, `kde_input_type`, `kde_input_click`,
 `kde_display_list`, `kde_media_list`, `kde_media_inspect`, `kde_media_control`,
-`kde_screenshot`, and `kde_capabilities`. Private lifecycle tools cover
+`kde_audio_list`, `kde_audio_set_default`, `kde_audio_set_volume`,
+`kde_audio_set_mute`, `kde_audio_route_stream`, `kde_screenshot`, and
+`kde_capabilities`. Private lifecycle tools cover
 list/create/show/use/stop/launch. Every MCP desktop tool requires a
 `session` field containing a managed ID or explicit `user-desktop`; CLI defaults
 do not apply. `kde_session_use` changes only the persisted CLI default. The
@@ -695,12 +701,11 @@ identified in plans and results.
 These are future, capability-conditional adapters—not part of the current
 prototype or required for the core desktop interface:
 
-- **PipeWire:** add typed device/default/volume/mute operations and explicit
-  per-application stream routing. Enumerate available sinks, sources, and active
-  application streams first; reject ambiguous PID/app-name matches; report the
-  effective result. These operations affect live user audio and must always use
-  an explicit live target. Microphone/camera capture remains a separate,
-  permission-gated capability; PipeWire being installed does not imply that
+- **PipeWire capture and advanced routing:** add permission-gated audio capture
+  through an installed portal where supported, plus richer stream identity and
+  routing workflows. Current device and stream controls affect live user audio,
+  so they require an explicit live target, enumerate streams before routing, and
+  verify the effective state. PipeWire being installed does not imply that
   capture is authorized.
 - **Plasma settings:** add narrowly scoped, typed settings operations only where
   a supported API exists. Report the effective value, provide dry-run and

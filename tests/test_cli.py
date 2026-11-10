@@ -19,6 +19,8 @@ def test_doctor_json_requires_explicit_user_desktop_commands() -> None:
     assert report["data"]["agent_session"]["input.inject"] is False
     assert report["data"]["agent_session"]["input.effect_ack"] is False
     assert "playerctl" in report["data"]["tools"]
+    assert "wpctl" in report["data"]["tools"]
+    assert "pactl" in report["data"]["tools"]
 
 
 def test_media_control_cli_passes_explicit_player_action_and_seek_offset(monkeypatch) -> None:
@@ -100,6 +102,71 @@ def test_media_list_and_inspect_cli_return_json_for_selected_target(monkeypatch)
         ("agent-123456789abc", "inspect", "vlc"),
     ]
     assert json.loads(inspected.stdout)["data"]["position_seconds"] == 3.5
+
+
+def test_audio_mute_and_route_cli_use_explicit_device_and_stream_guards(monkeypatch) -> None:
+    calls = []
+
+    class FakeOperations:
+        def __init__(self, session, **_kwargs):
+            self.session = session
+
+        def audio_set_mute(self, direction, device_name, muted):
+            calls.append((self.session, "mute", direction, device_name, muted))
+            return {"muted": muted}
+
+        def audio_route_stream(
+            self,
+            stream_id,
+            sink_name,
+            *,
+            application_name,
+            process_id=None,
+        ):
+            calls.append(
+                (self.session, "route", stream_id, sink_name, application_name, process_id)
+            )
+            return {"stream_id": stream_id, "sink_name": sink_name}
+
+    monkeypatch.setattr("kde_interaction.cli.DesktopOperations", FakeOperations)
+    runner = CliRunner()
+
+    muted = runner.invoke(
+        app,
+        [
+            "--session",
+            "user-desktop",
+            "audio",
+            "set-mute",
+            "source",
+            "usb_mic",
+            "mute",
+            "--json",
+        ],
+    )
+    routed = runner.invoke(
+        app,
+        [
+            "--session",
+            "user-desktop",
+            "audio",
+            "route-stream",
+            "17",
+            "headphones",
+            "--application",
+            "Firefox",
+            "--process-id",
+            "555",
+            "--json",
+        ],
+    )
+
+    assert muted.exit_code == 0, muted.stdout + muted.stderr
+    assert routed.exit_code == 0, routed.stdout + routed.stderr
+    assert calls == [
+        ("user-desktop", "mute", "source", "usb_mic", True),
+        ("user-desktop", "route", 17, "headphones", "Firefox", 555),
+    ]
 
 
 def test_session_list_json_is_empty_without_starting_a_session(tmp_path, monkeypatch) -> None:

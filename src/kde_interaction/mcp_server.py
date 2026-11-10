@@ -47,6 +47,11 @@ coordinator authorized to manage the selected session. Media tools query the
 selected session's MPRIS bus and can reveal its current media metadata; player
 names must be selected explicitly. A successful player-control call reports the
 request submission, not verified playback effect.
+
+PipeWire audio tools are live-user-desktop only. They require
+`session='user-desktop'`, may reveal active application audio streams, and can
+change device routing, volume, or microphone mute state. Confirm device and
+application selectors with `kde_audio_list` first.
 """
 
 OperationsFactory = Callable[[str], DesktopOperations]
@@ -61,6 +66,7 @@ TargetSession = Annotated[
     ),
 ]
 MediaAction = Literal["play", "pause", "play-pause", "stop", "next", "previous", "seek"]
+AudioDirection = Literal["sink", "source"]
 
 
 def _default_manager() -> SessionManager:
@@ -375,6 +381,99 @@ def create_mcp_server(
                 player,
                 action,
                 seconds=seconds,
+            )
+        )
+
+    @server.tool(
+        name="kde_audio_list",
+        description=(
+            "List live PipeWire outputs, inputs, defaults, volume/mute, and active output "
+            "streams. Requires session='user-desktop'."
+        ),
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+        structured_output=False,
+    )
+    def audio_list(session: TargetSession) -> CallToolResult:
+        """Inspect live-user PipeWire audio devices and active output streams."""
+        return _invoke(lambda: desktop_operations(session).audio_list())
+
+    @server.tool(
+        name="kde_audio_set_default",
+        description="Set and verify the live default output sink or input source.",
+        annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True),
+        structured_output=False,
+    )
+    def audio_set_default(
+        session: TargetSession,
+        direction: AudioDirection,
+        device_name: str,
+    ) -> CallToolResult:
+        """Set an exact listed sink/source as default; only for user-desktop."""
+        return _invoke(
+            lambda: desktop_operations(session).audio_set_default(direction, device_name)
+        )
+
+    @server.tool(
+        name="kde_audio_set_volume",
+        description="Set and verify a live sink/source volume from 0 through 100 percent.",
+        annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True),
+        structured_output=False,
+    )
+    def audio_set_volume(
+        session: TargetSession,
+        direction: AudioDirection,
+        device_name: str,
+        volume_percent: float,
+    ) -> CallToolResult:
+        """Set the absolute percentage on one exact listed sink/source."""
+        return _invoke(
+            lambda: desktop_operations(session).audio_set_volume(
+                direction,
+                device_name,
+                volume_percent,
+            )
+        )
+
+    @server.tool(
+        name="kde_audio_set_mute",
+        description="Explicitly mute or unmute one live sink/source and verify the result.",
+        annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True),
+        structured_output=False,
+    )
+    def audio_set_mute(
+        session: TargetSession,
+        direction: AudioDirection,
+        device_name: str,
+        muted: bool,
+    ) -> CallToolResult:
+        """Set a boolean mute state; toggling is deliberately not exposed."""
+        return _invoke(
+            lambda: desktop_operations(session).audio_set_mute(direction, device_name, muted)
+        )
+
+    @server.tool(
+        name="kde_audio_route_stream",
+        description=(
+            "Move one live output stream to a sink after checking its exact stream ID and "
+            "application name; requires session='user-desktop'."
+        ),
+        annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True),
+        structured_output=False,
+    )
+    def audio_route_stream(
+        session: TargetSession,
+        stream_id: int,
+        sink_name: str,
+        application_name: str,
+        process_id: int | None = None,
+    ) -> CallToolResult:
+        """Move only the selected sink-input; optional PID further guards identity."""
+        return _invoke(
+            lambda: desktop_operations(session).audio_route_stream(
+                stream_id,
+                sink_name,
+                application_name=application_name,
+                process_id=process_id,
             )
         )
 

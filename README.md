@@ -259,13 +259,44 @@ Inspection returns playback status, available title/artist/album metadata,
 current position, and duration in seconds. Players may omit metadata or position;
 those fields are `null`. MPRIS control reports that a request was submitted, not
 that playback changed. `playerctl` names that would match multiple player
-instances are rejected; use an exact listed instance name. Media volume and
-PipeWire device/routing controls are not part of this interface yet.
+instances are rejected; use an exact listed instance name. Player-specific
+volume is not exposed; use the PipeWire device-volume controls below.
+
+#### PipeWire devices and per-app routing
+
+Audio operations are **live-desktop only** because the managed private KWin
+sessions do not have isolated PipeWire servers. Every command must explicitly
+select `--session user-desktop`. The backend requires `wpctl` and `pactl`, checks
+that the PulseAudio compatibility server is PipeWire, and verifies changes by
+reading state back. `doctor --json` reports whether both executables are
+installed; `audio list` checks whether the live server is usable:
+
+```bash
+# Inspect defaults, outputs (sinks), inputs (sources), and current output streams.
+kde-ai --session user-desktop audio list --json
+
+# Use exact device names from audio list. sink means output; source means input.
+kde-ai --session user-desktop audio set-default sink 'alsa_output.headphones' --json
+kde-ai --session user-desktop audio set-volume source 'alsa_input.usb_mic' 50 --json
+kde-ai --session user-desktop audio set-mute source 'alsa_input.usb_mic' mute --json
+
+# Move just one listed output stream; the ID and application name are both checked.
+kde-ai --session user-desktop audio route-stream 42 'alsa_output.headphones' \
+  --application Firefox --process-id 1234 --json
+```
+
+Changing the default affects new auto-connected streams; existing streams may
+stay on their current output. Use `route-stream` for one existing stream. If a
+browser has several streams, list them and choose the specific stream ID; the
+operation never moves all streams based only on a broad app-name match. Audio
+listing can reveal active application names, and mute/volume/default changes
+affect the user's real devices.
 
 ### MCP server
 
 The stdio MCP server exposes the same window, input, display, MPRIS media,
-screenshot, and capability operations, plus private-session lifecycle tools.
+PipeWire audio, screenshot, and capability operations, plus private-session
+lifecycle tools.
 Install the project with `uv sync`, then configure your MCP client to launch
 `kde-ai-mcp` from this checkout:
 
