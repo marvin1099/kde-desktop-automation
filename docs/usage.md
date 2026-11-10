@@ -252,17 +252,20 @@ kde-desktop --session user-desktop media list --json
 PLAYER='firefox.instance123'
 kde-desktop --session user-desktop media inspect "$PLAYER" --json
 
-# Typed transport controls; seek is a relative offset in seconds (negative rewinds).
+# Relative seek offsets may be negative; seek-to uses an absolute position in seconds.
 kde-desktop --session user-desktop media control "$PLAYER" pause --json
 kde-desktop --session user-desktop media control "$PLAYER" seek --seconds -15 --json
+kde-desktop --session user-desktop media seek-to "$PLAYER" 180 --json
 ```
 
 Inspection returns playback status, available title/artist/album metadata,
 current position, and duration in seconds. Players may omit metadata or position;
-those fields are `null`. MPRIS control reports that a request was submitted, not
-that playback changed. `playerctl` names that would match multiple player
-instances are rejected; use an exact listed instance name. Player-specific
-volume is not exposed; use the PipeWire device-volume controls below.
+those fields are `null`. Relative `seek` offsets rewind/advance from the current
+position; `media seek-to` submits an absolute position between 0 and 86400 seconds.
+Both report that a request was submitted, not that playback changed. `playerctl`
+names that would match multiple player instances are rejected; use an exact
+listed instance name. Player-specific volume is not exposed; use the PipeWire
+device-volume controls below.
 
 #### PipeWire devices and per-app routing
 

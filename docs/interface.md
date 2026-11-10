@@ -57,20 +57,23 @@ The current shared subset includes window list/find/wait/inspect/activate,
 targeted key/text/normalized click input, display list, screenshots, per-target
 capability reports, and MPRIS player list/inspect/control. Media operations use
 the selected target's D-Bus session and exact player names; they require
-`playerctl` and do not infer a player when several are present. The current
-live-desktop subset also includes PipeWire device/default inspection, verified
-default selection, volume/mute, and single-stream output routing. Audio controls
-require an explicit `user-desktop` target and a PipeWire Pulse compatibility
-server; private KWin sessions do not provide an isolated audio server. The
-launch commands accept executable argument vectors (never shell strings) and
-are not security boundaries; a future user-facing launcher should prefer
-validated desktop-entry IDs. Both backends' input remains best-effort: KWin
-gives no application-delivery acknowledgement, so verify effects independently.
-X11, accessibility targets, and semantic app-level actions remain unimplemented.
+`playerctl` and do not infer a player when several are present. Playback
+controls include relative seek and a separate bounded absolute seek-to operation.
+The current live-desktop subset also includes PipeWire device/default inspection,
+verified default selection, volume/mute, and single-stream output routing. Audio
+controls require an explicit `user-desktop` target and a PipeWire Pulse
+compatibility server; private KWin sessions do not provide an isolated audio
+server. The launch commands accept executable argument vectors (never shell
+strings) and are not security boundaries; a future user-facing launcher should
+prefer validated desktop-entry IDs. Both backends' input remains best-effort:
+KWin gives no application-delivery acknowledgement, so verify effects
+independently. X11, accessibility targets, and semantic app-level actions remain
+unimplemented.
 
 MPRIS inspection returns playback status, available title/artist/album, current
 position, and duration. Missing optional metadata is `null`; controls report
-request submission, not verified playback effect. Player volume, PipeWire
+request submission, not verified playback effect. Absolute seek is bounded to
+24 hours and is a request, not verified playback effect. Player volume, PipeWire
 device selection, and per-application audio routing are not implemented.
 
 Targeted input currently means **active-window guarded**, not compositor-atomic

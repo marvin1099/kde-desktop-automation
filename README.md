@@ -16,7 +16,7 @@ private KWin session or—only when explicitly requested—the live desktop.
 - **Windows and input:** list/find/wait/inspect/activate windows; send guarded
   key, text, and normalized window-relative click input; capture screenshots.
 - **Media:** list and inspect MPRIS players, then submit typed playback
-  controls, including relative seek.
+  controls, including relative seek and absolute seek-to.
 - **Audio:** inspect PipeWire devices and output streams; set defaults,
   volume/mute, or route one verified stream. Audio operations are live-desktop
   only.
@@ -80,6 +80,7 @@ kde-desktop --help
 kde-desktop window --help
 kde-desktop window wait --help
 kde-desktop audio route-stream --help
+kde-desktop media seek-to --help
 ```
 
 Use `--json` for versioned output that scripts can parse. A safe discovery flow

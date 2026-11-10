@@ -120,6 +120,47 @@ class MprisBackend:
             ),
         }
 
+    def seek_to_player(
+        self,
+        player: str,
+        position_seconds: float,
+        *,
+        target: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Submit an absolute seek to one exact MPRIS player."""
+        if (
+            isinstance(position_seconds, bool)
+            or not isinstance(position_seconds, (int, float))
+            or not isfinite(position_seconds)
+            or position_seconds < 0
+            or position_seconds > _MAX_SEEK_SECONDS
+        ):
+            raise InteractionError(
+                "invalid_seek_position",
+                "Absolute position must be a finite value from 0 through 86400 seconds.",
+                details={
+                    "position_seconds": position_seconds,
+                    "maximum_position_seconds": _MAX_SEEK_SECONDS,
+                },
+            )
+
+        selected = self._resolve_player(player)
+        normalized_position = 0.0 if position_seconds == 0 else float(position_seconds)
+        position = f"{normalized_position:.6f}".rstrip("0").rstrip(".")
+        require_success(self._run_player(selected, "position", position))
+        return {
+            "target": target,
+            "player": selected,
+            "action": "seek-to",
+            "position_seconds": normalized_position,
+            "command_submitted": True,
+            "effect_verified": False,
+            "note": (
+                "The player accepted the absolute MPRIS position request; inspect position "
+                "to verify effect."
+            ),
+        }
+
     def _available_players(self) -> list[str]:
         result = run_command([self.playerctl, "--list-all"], env=self.environ, timeout=3.0)
         require_success(result)

@@ -81,6 +81,7 @@ app.add_typer(media_app, name="media")
 app.add_typer(audio_app, name="audio")
 
 console = Console()
+MediaControlAction = Literal["play", "pause", "play-pause", "stop", "next", "previous", "seek"]
 
 
 @app.callback()
@@ -400,20 +401,41 @@ def inspect_media_player(
 def control_media_player(
     ctx: Context,
     player: str = typer.Argument(..., help="Exact player name returned by media list."),
-    action: str = typer.Argument(
+    action: MediaControlAction = typer.Argument(
         ...,
-        help="play, pause, play-pause, stop, next, previous, or seek.",
+        help="Transport action or relative seek; use media seek-to for an absolute position.",
     ),
     seconds: float | None = typer.Option(
         None,
         "--seconds",
-        help="Relative seek offset; required for seek, in seconds (negative rewinds).",
+        min=-86_400,
+        max=86_400,
+        help="Non-zero relative seek offset; required for seek, in seconds (negative rewinds).",
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Submit one typed MPRIS transport request to one exact player."""
     _run(
         lambda: (_operations(ctx).media_control(player, action, seconds=seconds), []),
+        json_output=json_output,
+    )
+
+
+@media_app.command("seek-to")
+def seek_media_player_to(
+    ctx: Context,
+    player: str = typer.Argument(..., help="Exact player name returned by media list."),
+    position_seconds: float = typer.Argument(
+        ...,
+        min=0,
+        max=86_400,
+        help="Absolute playback position in seconds (0–86400).",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Submit an absolute seek to one exact MPRIS player; inspect afterward to verify it."""
+    _run(
+        lambda: (_operations(ctx).media_seek_to(player, position_seconds), []),
         json_output=json_output,
     )
 

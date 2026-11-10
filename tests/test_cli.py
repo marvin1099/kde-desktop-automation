@@ -61,6 +61,41 @@ def test_media_control_cli_passes_explicit_player_action_and_seek_offset(monkeyp
     assert json.loads(result.stdout)["data"]["seconds"] == -15.0
 
 
+def test_media_seek_to_cli_passes_absolute_position_to_selected_target(monkeypatch) -> None:
+    calls = []
+
+    class FakeOperations:
+        def __init__(self, session, **_kwargs):
+            self.session = session
+
+        def media_seek_to(self, player, position_seconds):
+            calls.append((self.session, player, position_seconds))
+            return {
+                "target": {"kind": self.session},
+                "player": player,
+                "position_seconds": position_seconds,
+            }
+
+    monkeypatch.setattr("kde_desktop_automation.cli.DesktopOperations", FakeOperations)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--session",
+            "agent-123456789abc",
+            "media",
+            "seek-to",
+            "vlc",
+            "142.75",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert calls == [("agent-123456789abc", "vlc", 142.75)]
+    assert json.loads(result.stdout)["data"]["position_seconds"] == 142.75
+
+
 def test_media_list_and_inspect_cli_return_json_for_selected_target(monkeypatch) -> None:
     calls = []
 

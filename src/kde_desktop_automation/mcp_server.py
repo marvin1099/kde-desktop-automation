@@ -45,7 +45,7 @@ a persisted CLI default but does not affect MCP desktop calls, which always
 require an explicit selector. Use session lifecycle tools only through a
 coordinator authorized to manage the selected session. Media tools query the
 selected session's MPRIS bus and can reveal its current media metadata; player
-names must be selected explicitly. A successful player-control call reports the
+names must be selected explicitly. Successful control and seek calls report
 request submission, not verified playback effect.
 
 PipeWire audio tools are live-user-desktop only. They require
@@ -394,8 +394,10 @@ def create_mcp_server(
     @server.tool(
         name="kde_media_control",
         description=(
-            "Submit play, pause, play-pause, stop, next, previous, or relative seek "
-            "to one explicitly selected MPRIS player."
+            "Submit play, pause, play-pause, stop, next, previous, or a relative seek "
+            "to one explicitly selected MPRIS player. For seek, seconds is required, "
+            "must be non-zero, and is an offset (negative rewinds). Use kde_media_seek_to "
+            "when you need an absolute playback position."
         ),
         annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True),
         structured_output=False,
@@ -406,7 +408,7 @@ def create_mcp_server(
         action: MediaAction,
         seconds: Annotated[float | None, Field(ge=-86_400.0, le=86_400.0)] = None,
     ) -> CallToolResult:
-        """Send a typed transport request; seconds is required only for seek."""
+        """Send a typed transport request; seconds is required only for relative seek."""
         return _invoke(
             lambda: desktop_operations(session).media_control(
                 player,
@@ -414,6 +416,23 @@ def create_mcp_server(
                 seconds=seconds,
             )
         )
+
+    @server.tool(
+        name="kde_media_seek_to",
+        description=(
+            "Seek one exact listed MPRIS player to an absolute position from 0 through "
+            "86400 seconds. The request is not verified; inspect the player afterward."
+        ),
+        annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True),
+        structured_output=False,
+    )
+    def media_seek_to(
+        session: TargetSession,
+        player: Selector,
+        position_seconds: Annotated[float, Field(ge=0.0, le=86_400.0)],
+    ) -> CallToolResult:
+        """Submit an absolute position request to one explicitly selected player."""
+        return _invoke(lambda: desktop_operations(session).media_seek_to(player, position_seconds))
 
     @server.tool(
         name="kde_audio_list",

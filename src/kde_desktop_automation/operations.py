@@ -269,6 +269,13 @@ class DesktopOperations:
             seconds=seconds,
         )
 
+    def media_seek_to(self, player: str, position_seconds: float) -> dict[str, Any]:
+        return self._media_backend().seek_to_player(
+            player,
+            position_seconds,
+            target=self._target(),
+        )
+
     def audio_list(self) -> dict[str, Any]:
         return self._pipewire_audio_backend().list_audio(target=self._target())
 
@@ -408,6 +415,7 @@ def _media_capabilities() -> dict[str, bool]:
         "media.players": available,
         "media.inspect": available,
         "media.control": available,
+        "media.seek_to": available,
     }
 
 

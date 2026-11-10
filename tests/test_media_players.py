@@ -127,6 +127,56 @@ def test_mpris_control_targets_one_player_and_seeks_by_relative_seconds(
     assert result["effect_verified"] is False
 
 
+def test_mpris_seek_to_uses_an_absolute_position_for_one_exact_player(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, calls = _fake_backend(monkeypatch, ["vlc"])
+
+    result = backend.seek_to_player("vlc", 142.75, target=TARGET)
+
+    assert calls[-1] == ("--player=vlc", "position", "142.75")
+    assert result["target"] == TARGET
+    assert result["player"] == "vlc"
+    assert result["action"] == "seek-to"
+    assert result["position_seconds"] == 142.75
+    assert result["command_submitted"] is True
+    assert result["effect_verified"] is False
+
+
+@pytest.mark.parametrize("position", [-0.1, float("inf"), float("nan"), 86_401.0, True])
+def test_mpris_seek_to_rejects_invalid_absolute_positions(
+    monkeypatch: pytest.MonkeyPatch,
+    position: float,
+) -> None:
+    backend, calls = _fake_backend(monkeypatch, ["vlc"])
+
+    with pytest.raises(InteractionError) as error:
+        backend.seek_to_player("vlc", position, target=TARGET)
+
+    assert error.value.code == "invalid_seek_position"
+    assert calls == []
+
+
+def test_mpris_seek_to_allows_zero_position(monkeypatch: pytest.MonkeyPatch) -> None:
+    backend, calls = _fake_backend(monkeypatch, ["vlc"])
+
+    result = backend.seek_to_player("vlc", 0, target=TARGET)
+
+    assert calls[-1] == ("--player=vlc", "position", "0")
+    assert result["position_seconds"] == 0
+
+
+def test_mpris_seek_to_normalizes_negative_zero_to_absolute_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, calls = _fake_backend(monkeypatch, ["vlc"])
+
+    result = backend.seek_to_player("vlc", -0.0, target=TARGET)
+
+    assert calls[-1] == ("--player=vlc", "position", "0")
+    assert result["position_seconds"] == 0.0
+
+
 def test_mpris_rejects_a_playerctl_selector_that_would_match_multiple_instances(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
