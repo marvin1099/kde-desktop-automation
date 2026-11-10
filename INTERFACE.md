@@ -46,12 +46,11 @@ explicit `--session user-desktop`; without `--session`, `KDE_AI_SESSION` may pin
 a private target, otherwise operations use the configured private default. An
 unset/stopped private target never falls back to the live desktop.
 
-`KDE_AI_SESSION` and the persisted private default are process-wide/shared
-selectors, not per-agent ownership. When multiple clients share the MCP server,
-pass a session ID on each desktop call; the optional
-`KDE_AI_MCP_REQUIRE_EXPLICIT_SESSION=1` server setting rejects omitted selectors.
-Session IDs are not authorization tokens: clients under this server share the
-same Unix-user authority over session lifecycle.
+The CLI's environment and persisted defaults are process-wide/shared selectors,
+not per-agent ownership. MCP desktop tools always require an explicit `session`
+argument; environment and persisted defaults do not apply to MCP calls. Session
+IDs are not authorization tokens: clients under one server share the same
+Unix-user authority over session lifecycle.
 
 The current shared subset includes window list/find/wait/inspect/activate,
 targeted key/text/normalized click input, display list, screenshots, and per-target
@@ -507,20 +506,18 @@ The stdio server exposes typed tools over `DesktopOperations`: `kde_window_list`
 `kde_window_find`, `kde_window_wait`, `kde_window_inspect`,
 `kde_window_activate`, `kde_input_key`, `kde_input_type`, `kde_input_click`,
 `kde_display_list`, `kde_screenshot`, and `kde_capabilities`. Private lifecycle
-tools cover list/create/show/use/stop/launch. Desktop tools take an optional
-`session` field: omission resolves `KDE_AI_SESSION` or the private default and
-the real desktop requires `session="user-desktop"` on that call. Set
-`KDE_AI_MCP_REQUIRE_EXPLICIT_SESSION=1` for a shared multi-agent server to reject
-omitted desktop selectors. `kde_session_use` changes the persisted default for
-all clients, not one agent. The server instructions repeat these constraints and
-the shared-UID lifecycle trust model to MCP clients. Domain errors retain stable
-error codes and structured details; both transports use a `schema_version` 1
-envelope, and screenshots return PNG image content alongside target metadata.
+tools cover list/create/show/use/stop/launch. Every MCP desktop tool requires a
+`session` field containing a managed ID or explicit `user-desktop`; CLI defaults
+do not apply. `kde_session_use` changes only the persisted CLI default. The
+server instructions repeat the selector rule and shared-UID lifecycle trust
+model to MCP clients. Domain errors retain stable error codes and structured
+details; both transports use a `schema_version` 1 envelope, and screenshots
+return PNG image content alongside target metadata.
 
 No MCP tool accepts arbitrary shell commands. Launch is limited to argv in a
 managed private session, while window targeting, focus checks, normalized
-coordinates, capability reporting, and input verification use the same
-operation layer as the CLI.
+coordinates, capability reporting, and input receipts use the same operation
+layer as the CLI.
 
 ## Suggested implementation order
 
@@ -634,15 +631,15 @@ not enough:
 
 | Gap | How an agent can trip | Refinement |
 | --- | --- | --- |
-| Input context is implicit | Agent assumes the active window or pointer display is the target; keyboard input lands in a modal or another app | Add `interaction_context` to observations and before/after input results: focused window, pointer coordinates and display, seat/backend, routing model, and modal owner |
-| Window references cross CLI calls | An opaque random ref from one process cannot be resolved by the next process, or a reused native ID points at a different window | Define reference lifetime and cross-process resolution; include `snapshot_id`, revalidate identity, and return `stale_target` rather than retargeting |
-| Similar windows/tabs | Two windows share app ID/title; the agent guesses which contains the requested page | Return all candidates and use a screenshot or accessible page metadata to disambiguate; never default to active window |
-| Screenshot is only a path | Agent cannot inspect the image, or clicks based on a resized/cropped image map to the wrong coordinates | Deliver image content to the agent and include pixel dimensions, crop/decorations, and pixel-to-logical-coordinate mapping |
-| Focus and delivery are not guaranteed | `--target window:X` sounds direct even though `dotool` sends to the globally focused window | Define whether input activates/focuses first; report actual focus and delivery route, and fail if the intended target cannot be confirmed |
-| No readiness/wait contract | Agent clicks a control before a dialog/page transition completes, or uses arbitrary sleeps | Add bounded `wait --until <observable predicate> --timeout ...`; after timeout return the latest state/screenshot rather than continuing blindly |
+| Input context is partial | Results identify the intended and observed active window, but not pointer location/display, modal ownership, or focused child control | Add `interaction_context` with pointer coordinates/display and modal/seat context; distinguish active-window focus from widget focus |
+| Window references can go stale | UUIDs resolve across CLI calls in one session, but a window may close or its geometry/state may change after observation | Return `stale_target` for closed IDs and optionally bind actions to a recent `snapshot_id` or expected identity/geometry |
+| Similar windows/tabs | `window find` rejects ambiguous window matches and returns candidates, but browser tabs inside one window are not identified | Keep failing closed on ambiguity; add browser/accessibility metadata only through an explicit provider rather than guessing from title |
+| Screenshot mapping is incomplete | MCP delivers image content and CLI writes a path, but neither offers per-window crops or a complete pixel/logical transform for every scale/decoration case | Include screenshot dimensions, target geometry basis, display scale/transform, and an explicit crop-to-window mapping where supported |
+| Focus and delivery are not guaranteed | KWin fake input checks the named window against active focus but is routed through compositor focus; focus can change during submission and KWin may ignore events | Preserve the no-implicit-activation rule for input; report focus before/after and submission status, and require independent postcondition checks |
+| UI readiness is limited | `window wait` supports unique app/title matches plus KWin fullscreen or display-filling geometry, but cannot wait for a page, dialog, or control to become ready | Add bounded, typed observable UI-state predicates where a reliable provider exists; return the last observation on timeout |
 | UI semantics are missing | Coordinates break after layout changes; “click status” has no stable meaning | Add an optional accessibility provider with element refs, roles, names, bounds, and supported actions; retain screenshot/coordinate fallback |
-| GUI actions are not transactional | A workflow can move two windows and then fail on the third step, leaving a partial layout | Have the agent plan, execute one checkpoint at a time, verify, and report a per-step outcome. Add compensating actions only where safe; do not promise atomic rollback |
-| Capabilities stop at tool plumbing | DND, launching known apps, or other Plasma settings are unavailable even though they are common automation requests | Add narrowly scoped, typed application/Plasma operations (for example launch by desktop-entry ID and notification mode with duration), each advertised only when supported; do not expose arbitrary shell execution |
+| GUI actions are not transactional | A workflow can change several controls and then fail, leaving partial state | Have the agent plan, execute one checkpoint at a time, verify, and report a per-step outcome. Add compensating actions only where safe; do not promise atomic rollback |
+| Capabilities stop at tool plumbing | Managed sessions can launch argv, but launch-by-desktop-entry, DND, and other typed Plasma/app operations are unavailable | Add narrowly scoped typed operations only when supported; do not expose arbitrary shell execution |
 | Changes have different risk | Changing resolution or submitting a ticket update is more consequential than taking a screenshot | Classify operations by impact, support dry-run for settings changes, preserve prior values where possible, and require confirmation when the user has not clearly authorized a consequential action |
 
 For multi-step tasks, the agent should maintain a small plan with each step's

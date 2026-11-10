@@ -426,7 +426,11 @@ class SessionManager:
     ) -> dict[str, Any]:
         listing = self.list_windows(session_id)
         window = find_one_window(listing["windows"], app_id=app_id, title=title)
-        return {"target": listing["target"], "window": window}
+        return {
+            "target": listing["target"],
+            "observed_at": listing["observed_at"],
+            "window": window,
+        }
 
     def inspect_window(self, session_id: str, window_id: str) -> dict[str, Any]:
         record = self._require_window_management(session_id)

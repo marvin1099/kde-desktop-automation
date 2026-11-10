@@ -191,6 +191,7 @@ class UserDesktopBackend:
         listing = self.list_windows()
         return {
             "target": {"kind": "user-desktop"},
+            "observed_at": listing["observed_at"],
             "window": find_one_window(listing["windows"], app_id=app_id, title=title),
         }
 

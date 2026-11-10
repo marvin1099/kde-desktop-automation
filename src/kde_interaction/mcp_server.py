@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import os
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -22,6 +21,11 @@ _LOGGER = logging.getLogger(__name__)
 _SERVER_INSTRUCTIONS = """\
 KDE Interaction exposes session-scoped KDE window and input operations.
 
+Every desktop tool call requires an explicit `session` argument: use a managed
+private session ID, or the exact value `user-desktop` to deliberately select
+the real desktop. Defaults and environment variables do not select a target for
+MCP calls.
+
 Use `session='user-desktop'` to select the real user desktop explicitly for that
 call. Never infer or substitute the live desktop when a private session is
 missing or stopped. The live target must always be explicitly passed.
@@ -37,33 +41,19 @@ screenshot or independent application state.
 Session IDs select a target; they are not per-client authorization tokens. MCP
 clients sharing this server share the Unix user's authority over managed private
 sessions, including the ability to list and stop them. `kde_session_use` changes
-the persisted private default for all clients that omit a session. For a shared
-multi-agent server, set KDE_AI_MCP_REQUIRE_EXPLICIT_SESSION=1 and pass each
-managed session ID to every desktop tool call. Use session lifecycle tools only
-through a coordinator that is authorized to manage the selected session.
-"""
-_OPTIONAL_SESSION_INSTRUCTIONS = """\
-The `session` argument on desktop tools is optional. When omitted, tools use
-KDE_AI_SESSION if it names a private session, otherwise the configured private
-default. The server process may set KDE_AI_SESSION to pin unscoped calls to one
-private session. For parallel agents, pass each managed session ID explicitly.
-"""
-_REQUIRED_SESSION_INSTRUCTIONS = """\
-Every desktop tool call must include `session`; this server rejects omitted
-selectors. Use `session='user-desktop'` only when explicitly opting into the
-live desktop. KDE_AI_SESSION and the persisted private default do not replace the
-required per-call argument.
+a persisted CLI default but does not affect MCP desktop calls, which always
+require an explicit selector. Use session lifecycle tools only through a
+coordinator authorized to manage the selected session.
 """
 
-OperationsFactory = Callable[[str | None], DesktopOperations]
+OperationsFactory = Callable[[str], DesktopOperations]
 ManagerFactory = Callable[[], SessionManager]
 TargetSession = Annotated[
-    str | None,
+    str,
     Field(
         description=(
-            "Managed private session ID; when omitted, KDE_AI_SESSION or the private default "
-            "is used unless this server requires an explicit selector. Use the exact value "
-            "'user-desktop' to explicitly select the real desktop."
+            "Required target selector: a managed private session ID, or the exact value "
+            "'user-desktop' to explicitly opt into the real user desktop."
         )
     ),
 ]
@@ -101,27 +91,14 @@ def create_mcp_server(
     *,
     operations_factory: OperationsFactory = DesktopOperations,
     manager_factory: ManagerFactory = _default_manager,
-    require_explicit_session: bool = False,
 ) -> FastMCP:
     """Build the stdio MCP server; factories allow operation-level transport tests."""
     server = FastMCP(
         "kde-ai",
-        instructions=_SERVER_INSTRUCTIONS
-        + (
-            _REQUIRED_SESSION_INSTRUCTIONS
-            if require_explicit_session
-            else _OPTIONAL_SESSION_INSTRUCTIONS
-        ),
+        instructions=_SERVER_INSTRUCTIONS,
     )
 
-    def desktop_operations(session: str | None) -> DesktopOperations:
-        if require_explicit_session and session is None:
-            raise InteractionError(
-                "session_required",
-                "This shared MCP server requires an explicit session ID on every "
-                "desktop tool call.",
-                details={"setting": "KDE_AI_MCP_REQUIRE_EXPLICIT_SESSION"},
-            )
+    def desktop_operations(session: str) -> DesktopOperations:
         return operations_factory(session)
 
     @server.tool(
@@ -176,8 +153,8 @@ def create_mcp_server(
     @server.tool(
         name="kde_session_use",
         description=(
-            "Set the persisted private default for all clients that omit session; "
-            "this is shared server state, not a per-agent selection."
+            "Set the persisted private default for CLI clients that omit --session. "
+            "This does not change MCP desktop calls, which require an explicit session."
         ),
         annotations=ToolAnnotations(
             destructiveHint=False, idempotentHint=True, openWorldHint=False
@@ -224,7 +201,7 @@ def create_mcp_server(
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
         structured_output=False,
     )
-    def window_list(session: TargetSession = None) -> CallToolResult:
+    def window_list(session: TargetSession) -> CallToolResult:
         """List window IDs, titles, app IDs, fullscreen/active state, and geometry."""
         return _invoke(lambda: desktop_operations(session).window_list())
 
@@ -238,31 +215,38 @@ def create_mcp_server(
         structured_output=False,
     )
     def window_find(
+        session: TargetSession,
         app_id: str | None = None,
         title: str | None = None,
-        session: TargetSession = None,
     ) -> CallToolResult:
         """Find one window. app_id is exact; title is a case-insensitive substring."""
         return _invoke(lambda: desktop_operations(session).window_find(app_id=app_id, title=title))
 
     @server.tool(
         name="kde_window_wait",
-        description="Wait up to 60 seconds for one matching window to appear.",
+        description=(
+            "Wait up to 60 seconds for a unique matching window, optionally until KWin "
+            "reports fullscreen or its geometry fills a logical display."
+        ),
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
         structured_output=False,
     )
     def window_wait(
+        session: TargetSession,
         app_id: str | None = None,
         title: str | None = None,
         timeout: float = 10.0,
-        session: TargetSession = None,
+        fullscreen: bool = False,
+        fills_display: bool = False,
     ) -> CallToolResult:
-        """Boundedly wait for a unique window match; ambiguous matches fail immediately."""
+        """Wait for a unique window match and optional fullscreen state; ambiguity fails."""
         return _invoke(
             lambda: desktop_operations(session).window_wait(
                 app_id=app_id,
                 title=title,
                 timeout=timeout,
+                fullscreen=fullscreen,
+                fills_display=fills_display,
             )
         )
 
@@ -272,7 +256,7 @@ def create_mcp_server(
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
         structured_output=False,
     )
-    def window_inspect(window_id: str, session: TargetSession = None) -> CallToolResult:
+    def window_inspect(session: TargetSession, window_id: str) -> CallToolResult:
         """Inspect a target window's state, geometry, app ID, and title."""
         return _invoke(lambda: desktop_operations(session).window_inspect(window_id))
 
@@ -282,7 +266,7 @@ def create_mcp_server(
         annotations=ToolAnnotations(destructiveHint=False, openWorldHint=True),
         structured_output=False,
     )
-    def window_activate(window_id: str, session: TargetSession = None) -> CallToolResult:
+    def window_activate(session: TargetSession, window_id: str) -> CallToolResult:
         """Activate by session-scoped UUID; live activation may switch desktops and move focus."""
         return _invoke(lambda: desktop_operations(session).window_activate(window_id))
 
@@ -292,7 +276,7 @@ def create_mcp_server(
         annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True),
         structured_output=False,
     )
-    def input_key(window_id: str, chord: str, session: TargetSession = None) -> CallToolResult:
+    def input_key(session: TargetSession, window_id: str, chord: str) -> CallToolResult:
         """Submit a key chord (for example CTRL+S) to the named, already-active window."""
         return _invoke(lambda: desktop_operations(session).input_key(window_id, chord))
 
@@ -304,7 +288,7 @@ def create_mcp_server(
         annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True),
         structured_output=False,
     )
-    def input_type(window_id: str, text: str, session: TargetSession = None) -> CallToolResult:
+    def input_type(session: TargetSession, window_id: str, text: str) -> CallToolResult:
         """Submit literal text to the named, already-active window."""
         return _invoke(lambda: desktop_operations(session).input_type(window_id, text))
 
@@ -317,10 +301,10 @@ def create_mcp_server(
         structured_output=False,
     )
     def input_click(
+        session: TargetSession,
         window_id: str,
         x: float,
         y: float,
-        session: TargetSession = None,
         button: str = "left",
     ) -> CallToolResult:
         """Click normalized window-relative coordinates; the target must already be active."""
@@ -339,7 +323,7 @@ def create_mcp_server(
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
         structured_output=False,
     )
-    def display_list(session: TargetSession = None) -> CallToolResult:
+    def display_list(session: TargetSession) -> CallToolResult:
         """List displays and coordinate spaces for the selected session."""
         return _invoke(lambda: desktop_operations(session).display_list())
 
@@ -349,7 +333,7 @@ def create_mcp_server(
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
         structured_output=False,
     )
-    def capabilities(session: TargetSession = None) -> CallToolResult:
+    def capabilities(session: TargetSession) -> CallToolResult:
         """Return target-scoped capability flags and backend limitations."""
         return _invoke(lambda: desktop_operations(session).capabilities())
 
@@ -360,7 +344,7 @@ def create_mcp_server(
         structured_output=False,
     )
     def screenshot(
-        session: TargetSession = None,
+        session: TargetSession,
         output: str | None = None,
         overwrite: bool = False,
     ) -> CallToolResult:
@@ -414,14 +398,7 @@ def _stop_private_session(manager: SessionManager, session_id: str) -> dict[str,
 def main() -> None:
     logging.basicConfig(level=logging.WARNING)
     _LOGGER.info("Starting KDE Interaction MCP server over stdio")
-    require_explicit_session = os.environ.get(
-        "KDE_AI_MCP_REQUIRE_EXPLICIT_SESSION", ""
-    ).strip().lower() in {
-        "1",
-        "true",
-        "yes",
-    }
-    create_mcp_server(require_explicit_session=require_explicit_session).run(transport="stdio")
+    create_mcp_server().run(transport="stdio")
 
 
 if __name__ == "__main__":

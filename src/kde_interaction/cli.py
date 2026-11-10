@@ -267,12 +267,28 @@ def wait_for_window(
         max=60.0,
         help="Maximum time to wait for one matching window (0.1–60 seconds).",
     ),
+    fullscreen: bool = typer.Option(
+        False,
+        "--fullscreen",
+        help="Wait until KWin reports the matching window as fullscreen.",
+    ),
+    fills_display: bool = typer.Option(
+        False,
+        "--fills-display",
+        help="Wait until matching window geometry covers a logical display.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
-    """Wait for a uniquely matching window to appear, useful after app launch."""
+    """Wait for a unique window and optional fullscreen/fills-display state."""
     _run(
         lambda: (
-            _operations(ctx).window_wait(app_id=app_id, title=title, timeout=timeout),
+            _operations(ctx).window_wait(
+                app_id=app_id,
+                title=title,
+                timeout=timeout,
+                fullscreen=fullscreen,
+                fills_display=fills_display,
+            ),
             [],
         ),
         json_output=json_output,

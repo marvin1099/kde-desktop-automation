@@ -202,6 +202,35 @@ the click receipt remains `effect_verified: false`. Inspect the post-action imag
 or independent app state. There is no accessibility tree for controls such as
 “Play All,” so if the UI or target is ambiguous, stop instead of guessing.
 
+#### Start a timer when a game enters fullscreen
+
+`window wait` can wait for either KWin's reported fullscreen state or a window
+whose logical geometry covers a display (useful for borderless/fake-fullscreen
+games). The latter requires display inspection support and allows a 2-pixel
+edge tolerance. Both conditions still require one unique app-ID/title match;
+unknown fullscreen state and ambiguous matches never count as success.
+
+The example wrapper waits in bounded 60-second intervals, re-inspects the same
+window before starting, and `exec`s the timer command as argv (no `eval`). Pass
+an exact app ID discovered from `window list`; `user-desktop` must be supplied
+explicitly to monitor the physical desktop. If more than one window has that
+app ID, pass `--title` and a distinguishing title substring; the wrapper fails
+on any remaining ambiguity:
+
+```bash
+bash examples/start-timer-on-fullscreen.sh \
+  agent-0123456789ab org.example.Game fullscreen -- speedrun-timer --start
+bash examples/start-timer-on-fullscreen.sh \
+  user-desktop org.example.Game fills-display -- speedrun-timer --start
+bash examples/start-timer-on-fullscreen.sh \
+  agent-0123456789ab org.example.Game --title "Any%" fullscreen -- speedrun-timer --start
+```
+
+Choose `fullscreen` for KWin's explicit state or `fills-display` for borderless
+geometry. A video automation script that must identify an actively playing
+media session or read its playhead still needs a player/MPRIS interface; this
+window API does not infer playback from fullscreen alone.
+
 ### MCP server
 
 The stdio MCP server exposes the same window, input, display, screenshot, and
@@ -225,37 +254,20 @@ checkout:
 }
 ```
 
-Desktop tools accept an optional `session` argument. Omitting it uses
-`KDE_AI_SESSION` from the server process environment, if set to a private ID,
-otherwise the configured private default. Pass the managed ID per call for
-parallel agents sharing one MCP server. To operate on the real desktop, a tool
-call must include `session: "user-desktop"`—the MCP server instructions explicitly
-prohibit inferring that target. If no private target is configured or it has
-stopped, the tool returns an error instead of falling back. `kde_screenshot`
-returns target/session metadata and both structured capture metadata and the
-PNG as MCP image content. Session creation/launch/stop tools operate only on
-managed private sessions; launch takes an argv array and never evaluates a shell
-command. MCP session IDs are selectors, not per-client authorization tokens:
-clients sharing the server share the Unix user's authority to list, launch, and
-stop managed sessions. `session use` changes the persisted default for all such
-clients. For a multi-agent MCP process, configure explicit selection:
+Every MCP desktop tool requires a `session` argument in its input schema. Pass a
+managed session ID returned by `kde_session_create`, or pass the exact string
+`user-desktop` when deliberately selecting the physical desktop. CLI defaults
+and `KDE_AI_SESSION` do not select MCP targets; `kde_session_use` changes a
+persisted CLI default only. This explicit per-call selector prevents accidental
+cross-session use but is not an authorization boundary. Existing MCP callers
+that omitted `session` must be updated; CLI default-session behavior is unchanged.
 
-```json
-{
-  "mcpServers": {
-    "kde-ai": {
-      "command": "uv",
-      "args": ["run", "--directory", "/absolute/path/to/kde-interation-ai", "kde-ai-mcp"],
-      "env": {"KDE_AI_MCP_REQUIRE_EXPLICIT_SESSION": "1"}
-    }
-  }
-}
-```
-
-In this mode, every desktop tool call must pass `session`, including
-`user-desktop` for live access. A coordinator should own session lifecycle calls
-and distribute explicit session IDs to the agents it coordinates. Input remains
-best-effort and must be independently verified.
+`kde_screenshot` returns target/session metadata and PNG image content. Session
+creation/launch/stop tools operate only on managed private sessions; launch
+takes an argv array and never evaluates a shell command. MCP clients sharing
+the server still share the Unix user's authority to list, launch, and stop
+sessions, so a coordinator should own lifecycle calls and distribute explicit
+IDs. Input remains best-effort and must be independently verified.
 
 ### Deliberate safety limits
 

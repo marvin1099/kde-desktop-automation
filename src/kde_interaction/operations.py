@@ -3,8 +3,9 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Callable
+from math import isfinite
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from kde_interaction.backends.user_desktop import UserDesktopBackend
 from kde_interaction.errors import InteractionError
@@ -12,6 +13,7 @@ from kde_interaction.paths import RuntimePaths
 from kde_interaction.sessions import SessionManager
 
 USER_DESKTOP = "user-desktop"
+_DISPLAY_COVERAGE_TOLERANCE = 2.0
 
 
 class DesktopOperations:
@@ -102,6 +104,8 @@ class DesktopOperations:
         app_id: str | None,
         title: str | None,
         timeout: float = 10.0,
+        fullscreen: bool = False,
+        fills_display: bool = False,
     ) -> dict[str, Any]:
         if timeout < 0.1 or timeout > 60.0:
             raise InteractionError(
@@ -109,12 +113,42 @@ class DesktopOperations:
                 "Window wait timeout must be between 0.1 and 60 seconds.",
                 details={"timeout_seconds": timeout},
             )
+        if fullscreen and fills_display:
+            raise InteractionError(
+                "invalid_wait_predicate",
+                "Choose either KWin fullscreen state or geometry that fills a display.",
+                details={"fullscreen": fullscreen, "fills_display": fills_display},
+            )
+        wait_condition: dict[str, bool] | None = None
+        if fullscreen:
+            wait_condition = {"fullscreen": True}
+        elif fills_display:
+            wait_condition = {"fills_display": True}
         started = time.monotonic()
         deadline = started + timeout
+        last_observation: dict[str, Any] | None = None
         while True:
             try:
                 result = self.window_find(app_id=app_id, title=title)
-                return result | {"waited_seconds": round(time.monotonic() - started, 3)}
+                window = result["window"]
+                display_records = self.display_list()["displays"] if fills_display else []
+                matched_displays = (
+                    _displays_covered_by_window(window, display_records) if fills_display else []
+                )
+                last_observation = result | {"matched_displays": matched_displays}
+                if (
+                    wait_condition is None
+                    or (fullscreen and window.get("fullscreen") is True)
+                    or (fills_display and bool(matched_displays))
+                ):
+                    waited_result = result | {
+                        "waited_seconds": round(time.monotonic() - started, 3)
+                    }
+                    if wait_condition is not None:
+                        waited_result["wait_condition"] = wait_condition
+                    if fills_display:
+                        waited_result["matched_displays"] = matched_displays
+                    return waited_result
             except InteractionError as exc:
                 if exc.code != "window_not_found":
                     raise
@@ -122,12 +156,14 @@ class DesktopOperations:
             if remaining <= 0:
                 raise InteractionError(
                     "window_wait_timeout",
-                    "No matching window appeared before the timeout.",
+                    "The requested window state was not observed before the timeout.",
                     details={
                         "app_id": app_id,
                         "title": title,
                         "timeout_seconds": timeout,
                         "session": self._session_id or USER_DESKTOP,
+                        "wait_condition": wait_condition,
+                        "last_observation": last_observation,
                     },
                 ) from None
             time.sleep(min(0.2, remaining))
@@ -210,3 +246,56 @@ class DesktopOperations:
         if self._session_id is None:
             raise InteractionError("invalid_target", "No managed private session is selected.")
         return self._session_id
+
+
+def _displays_covered_by_window(
+    window: dict[str, Any],
+    displays: list[dict[str, Any]],
+) -> list[str]:
+    """Return displays fully covered by logical-pixel window geometry (2px tolerance)."""
+    geometry = window.get("geometry")
+    if not isinstance(geometry, dict):
+        return []
+    if geometry.get("coordinate_space") != "logical-desktop-pixels":
+        return []
+    fields = ("x", "y", "width", "height")
+    values = [geometry.get(field) for field in fields]
+    if not all(_is_finite_number(value) for value in values):
+        return []
+    x, y, width, height = (float(cast(int | float, value)) for value in values)
+    if width <= 0 or height <= 0:
+        return []
+
+    right = x + width
+    bottom = y + height
+    matches: list[str] = []
+    for display in displays:
+        if display.get("coordinate_space") != "logical-desktop-pixels":
+            continue
+        display_values = [display.get(field) for field in fields]
+        if not all(_is_finite_number(value) for value in display_values):
+            continue
+        display_x, display_y, display_width, display_height = (
+            float(cast(int | float, value)) for value in display_values
+        )
+        if display_width <= 0 or display_height <= 0:
+            continue
+        if (
+            x <= display_x + _DISPLAY_COVERAGE_TOLERANCE
+            and y <= display_y + _DISPLAY_COVERAGE_TOLERANCE
+            and right >= display_x + display_width - _DISPLAY_COVERAGE_TOLERANCE
+            and bottom >= display_y + display_height - _DISPLAY_COVERAGE_TOLERANCE
+        ):
+            name = display.get("name")
+            if isinstance(name, str) and name:
+                matches.append(name)
+    return matches
+
+
+def _is_finite_number(value: Any) -> bool:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return isfinite(float(value))
+    except (OverflowError, ValueError):
+        return False

@@ -67,22 +67,30 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
 
     listing_tool = next(tool for tool in tools if tool.name == "kde_window_list")
     assert "session" in listing_tool.inputSchema["properties"]
-    assert "session" not in listing_tool.inputSchema.get("required", [])
-    assert "private default" in listing_tool.inputSchema["properties"]["session"]["description"]
+    assert "session" in listing_tool.inputSchema.get("required", [])
+    assert (
+        "Required target selector"
+        in listing_tool.inputSchema["properties"]["session"]["description"]
+    )
     assert "user-desktop" in listing_tool.inputSchema["properties"]["session"]["description"]
-
-
-def test_mcp_omitted_session_keeps_private_default_fail_closed() -> None:
-    server = _server()
-
-    result = asyncio.run(server.call_tool("kde_window_list", {}))
-
-    assert isinstance(result, CallToolResult)
-    assert result.isError is True
-    assert result.structuredContent is not None
-    assert result.structuredContent["schema_version"] == "1"
-    assert result.structuredContent["error"]["code"] == "private_default_session_unset"
-    assert FakeOperations.selected_sessions == [None]
+    desktop_tool_names = {
+        "kde_window_list",
+        "kde_window_find",
+        "kde_window_wait",
+        "kde_window_inspect",
+        "kde_window_activate",
+        "kde_input_key",
+        "kde_input_type",
+        "kde_input_click",
+        "kde_display_list",
+        "kde_screenshot",
+        "kde_capabilities",
+    }
+    for tool in tools:
+        if tool.name in desktop_tool_names:
+            assert "session" in tool.inputSchema.get("required", []), tool.name
+    wait_tool = next(tool for tool in tools if tool.name == "kde_window_wait")
+    assert {"session", "fullscreen", "fills_display"} <= set(wait_tool.inputSchema["properties"])
 
 
 def test_mcp_routes_real_desktop_only_when_explicitly_selected() -> None:
@@ -142,31 +150,19 @@ def test_mcp_instructions_state_live_desktop_safety() -> None:
     server = _server()
     instructions = " ".join((server.instructions or "").split())
 
+    assert "Every desktop tool call requires an explicit `session` argument" in instructions
     assert "Never infer or substitute the live desktop" in instructions
-    assert "configured private default" in instructions
-    assert "KDE_AI_SESSION" in instructions
     assert "not per-client authorization tokens" in instructions
+    assert "kde_session_use" in instructions
 
 
-def test_shared_mcp_can_require_explicit_session_per_desktop_call() -> None:
-    FakeOperations.selected_sessions.clear()
-    server = create_mcp_server(
-        operations_factory=cast(OperationsFactory, FakeOperations),
-        require_explicit_session=True,
+def test_mcp_session_selector_is_not_implicit_for_any_server_mode() -> None:
+    server = _server()
+    listing_tool = next(
+        tool for tool in asyncio.run(server.list_tools()) if tool.name == "kde_window_list"
     )
 
-    missing = asyncio.run(server.call_tool("kde_window_list", {}))
-    selected = asyncio.run(server.call_tool("kde_window_list", {"session": "agent-123456789abc"}))
-
-    assert isinstance(missing, CallToolResult)
-    assert missing.isError is True
-    assert missing.structuredContent["error"]["code"] == "session_required"
-    assert isinstance(selected, CallToolResult)
-    assert selected.isError is False
-    assert FakeOperations.selected_sessions == ["agent-123456789abc"]
-    instructions = " ".join((server.instructions or "").split())
-    assert "rejects omitted selectors" in instructions
-    assert "When omitted, tools use KDE_AI_SESSION" not in instructions
+    assert "session" in listing_tool.inputSchema.get("required", [])
 
 
 def test_shared_mcp_routes_concurrent_calls_to_their_explicit_sessions() -> None:

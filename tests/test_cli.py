@@ -220,7 +220,11 @@ def test_window_wait_returns_a_unique_match_for_selected_target(monkeypatch) -> 
             assert title == "notes"
             return {
                 "target": {"kind": "agent-session", "session_id": target_session_id},
-                "window": {"window_id": "b5ff2329-3976-4c31-bf31-1538cb97c8f0"},
+                "observed_at": "2026-11-10T12:00:00+00:00",
+                "window": {
+                    "window_id": "b5ff2329-3976-4c31-bf31-1538cb97c8f0",
+                    "fullscreen": True,
+                },
             }
 
     monkeypatch.setattr("kde_interaction.cli._manager", FakeManager)
@@ -238,6 +242,7 @@ def test_window_wait_returns_a_unique_match_for_selected_target(monkeypatch) -> 
             "notes",
             "--timeout",
             "1",
+            "--fullscreen",
             "--json",
         ],
     )
@@ -246,3 +251,63 @@ def test_window_wait_returns_a_unique_match_for_selected_target(monkeypatch) -> 
     data = json.loads(result.stdout)["data"]
     assert data["window"]["window_id"] == "b5ff2329-3976-4c31-bf31-1538cb97c8f0"
     assert data["waited_seconds"] >= 0
+    assert data["wait_condition"] == {"fullscreen": True}
+
+
+def test_window_wait_cli_supports_borderless_display_coverage(monkeypatch) -> None:
+    session_id = "agent-123456789abc"
+
+    class FakeManager:
+        def find_window(self, target_session_id, *, app_id, title):
+            assert target_session_id == session_id
+            assert app_id == "org.example.Game"
+            assert title is None
+            return {
+                "target": {"kind": "agent-session", "session_id": target_session_id},
+                "observed_at": "2026-11-10T12:00:00+00:00",
+                "window": {
+                    "window_id": "b5ff2329-3976-4c31-bf31-1538cb97c8f0",
+                    "app_id": app_id,
+                    "geometry": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 1920,
+                        "height": 1080,
+                        "coordinate_space": "logical-desktop-pixels",
+                    },
+                },
+            }
+
+        def displays(self, target_session_id):
+            assert target_session_id == session_id
+            return [
+                {
+                    "name": "DP-1",
+                    "x": 0,
+                    "y": 0,
+                    "width": 1920,
+                    "height": 1080,
+                    "coordinate_space": "logical-desktop-pixels",
+                }
+            ]
+
+    monkeypatch.setattr("kde_interaction.cli._manager", FakeManager)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--session",
+            session_id,
+            "window",
+            "wait",
+            "--app-id",
+            "org.example.Game",
+            "--fills-display",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)["data"]
+    assert data["wait_condition"] == {"fills_display": True}
+    assert data["matched_displays"] == ["DP-1"]
