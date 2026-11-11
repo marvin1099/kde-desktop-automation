@@ -101,6 +101,13 @@ class DesktopOperations:
             return self._user_desktop.activate_window(window_id)
         return self._private_manager().activate_window(self._private_session_id(), window_id)
 
+    def window_set_minimized(self, window_id: str, minimized: bool) -> dict[str, Any]:
+        if self._user_desktop is not None:
+            return self._user_desktop.set_window_minimized(window_id, minimized)
+        return self._private_manager().set_window_minimized(
+            self._private_session_id(), window_id, minimized
+        )
+
     def window_wait(
         self,
         *,
@@ -197,6 +204,46 @@ class DesktopOperations:
             return self._user_desktop.click_window(window_id, x, y, button=button)
         return self._private_manager().click_window(
             self._private_session_id(), window_id, x, y, button=button
+        )
+
+    def input_click_at(
+        self,
+        x: int,
+        y: int,
+        *,
+        button: str = "left",
+    ) -> dict[str, Any]:
+        if self._user_desktop is not None:
+            return self._user_desktop.click_at(x, y, button=button)
+        return self._private_manager().click(self._private_session_id(), x, y, button=button)
+
+    def input_drag(
+        self,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        *,
+        button: str = "left",
+        steps: int = 8,
+    ) -> dict[str, Any]:
+        if self._user_desktop is not None:
+            return self._user_desktop.drag_at(
+                start_x,
+                start_y,
+                end_x,
+                end_y,
+                button=button,
+                steps=steps,
+            )
+        return self._private_manager().drag(
+            self._private_session_id(),
+            start_x,
+            start_y,
+            end_x,
+            end_y,
+            button=button,
+            steps=steps,
         )
 
     def display_list(self) -> dict[str, Any]:

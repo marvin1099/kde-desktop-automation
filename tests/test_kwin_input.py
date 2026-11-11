@@ -146,6 +146,72 @@ def test_click_dispatches_absolute_motion_and_balanced_button_events() -> None:
     assert connection.roundtrips == 3
 
 
+def test_drag_moves_with_button_held_and_releases_it_at_the_end() -> None:
+    client, connection = _fake_client()
+
+    receipt = client.drag(10, 20, 50, 40, button="left", steps=2)
+
+    assert connection.lib.calls == [
+        (9, 6, (10 * 256, 20 * 256)),
+        (2, 6, (0x110, _KEY_STATE_PRESSED)),
+        (9, 6, (30 * 256, 30 * 256)),
+        (9, 6, (50 * 256, 40 * 256)),
+        (2, 6, (0x110, _KEY_STATE_RELEASED)),
+    ]
+    assert receipt.action == "drag left from (10, 20) to (50, 40)"
+    assert receipt.events_submitted == 5
+    assert connection.roundtrips == 5
+
+
+def test_drag_releases_the_button_if_a_motion_request_fails() -> None:
+    client, connection = _fake_client()
+    original_request = connection.lib.wl_proxy_marshal_flags
+
+    def fail_after_press(proxy, opcode, interface, version, flags, *arguments):
+        if opcode == 9 and len(connection.lib.calls) >= 2:
+            raise RuntimeError("simulated pointer motion failure")
+        return original_request(proxy, opcode, interface, version, flags, *arguments)
+
+    connection.lib.wl_proxy_marshal_flags = fail_after_press
+
+    with pytest.raises(RuntimeError, match="simulated pointer motion failure"):
+        client.drag(10, 20, 50, 40, steps=2)
+
+    assert connection.lib.calls[-1] == (2, 6, (0x110, _KEY_STATE_RELEASED))
+
+
+def test_drag_retries_button_release_if_the_initial_release_fails() -> None:
+    client, connection = _fake_client()
+    original_request = connection.lib.wl_proxy_marshal_flags
+    release_attempts = 0
+
+    def fail_first_release(proxy, opcode, interface, version, flags, *arguments):
+        nonlocal release_attempts
+        if opcode == 2 and getattr(arguments[1], "value", arguments[1]) == _KEY_STATE_RELEASED:
+            release_attempts += 1
+            if release_attempts == 1:
+                raise RuntimeError("simulated button release failure")
+        return original_request(proxy, opcode, interface, version, flags, *arguments)
+
+    connection.lib.wl_proxy_marshal_flags = fail_first_release
+
+    with pytest.raises(RuntimeError, match="simulated button release failure"):
+        client.drag(10, 20, 50, 40, steps=1)
+
+    assert release_attempts == 2
+    assert connection.lib.calls[-1] == (2, 6, (0x110, _KEY_STATE_RELEASED))
+
+
+def test_drag_rejects_unbounded_or_empty_step_count_before_input() -> None:
+    client, connection = _fake_client()
+
+    for steps in (0, 65):
+        with pytest.raises(InteractionError, match="Drag steps"):
+            client.drag(10, 20, 50, 40, steps=steps)
+
+    assert connection.lib.calls == []
+
+
 @pytest.mark.parametrize("version", [3, 4, 5])
 def test_layout_aware_keys_and_text_require_fake_input_v6(version: int) -> None:
     client, connection = _fake_client(version)

@@ -53,9 +53,11 @@ argument; environment and persisted defaults do not apply to MCP calls. Session
 IDs are not authorization tokens: clients under one server share the same
 Unix-user authority over session lifecycle.
 
-The current shared subset includes window list/find/wait/inspect/activate,
-targeted key/text/normalized click input, display list, screenshots, per-target
-capability reports, and MPRIS player list/inspect/control. Media operations use
+The current shared subset includes window list/find/wait/inspect/activate and
+reversible minimized-state changes; active-window-guarded key/text/normalized
+click input; global logical-coordinate click and bounded drag; display list,
+screenshots, per-target capability reports, and MPRIS player list/inspect/control
+and absolute seek-to. Media operations use
 the selected target's D-Bus session and exact player names; they require
 `playerctl` and do not infer a player when several are present. Playback
 controls include relative seek and a separate bounded absolute seek-to operation.
@@ -73,20 +75,21 @@ unimplemented.
 MPRIS inspection returns playback status, available title/artist/album, current
 position, and duration. Missing optional metadata is `null`; controls report
 request submission, not verified playback effect. Absolute seek is bounded to
-24 hours and is a request, not verified playback effect. Player volume, PipeWire
-device selection, and per-application audio routing are not implemented.
+24 hours and is a request, not verified playback effect. Player-specific volume,
+arbitrary PipeWire graph patching, and audio capture are not implemented.
 
-Targeted input currently means **active-window guarded**, not compositor-atomic
-per-window routing. Key, text, and click requests require the target to already
-be active; an inactive target is rejected and is not automatically activated.
-Explicitly activating an inactive live window changes user focus and may switch
-virtual desktops. Whether KWin offers a reliable focus-independent delivery path
-is unresolved and must be evaluated; do not promise that live input preserves
-focus. If it is not supported, controlling an inactive window requires explicit
-activation and may steal focus. Input delivery is not acknowledged. Private
-window records retain frame and content geometry separately. The live KWin D-Bus
-path exposes its reported geometry basis rather than asserting that it is
-identical to the private content geometry.
+Window-targeted input means **active-window guarded**, not compositor-atomic
+per-window routing. Key, text, and normalized click requests require the target
+to already be active; an inactive target is rejected and is not automatically
+activated. Global-coordinate click and drag are separate operations: they use
+logical desktop pixels, are not bound to a window, and may move the pointer or
+change the active window. Drag interpolation is limited to 64 steps; each point
+on its sampled path must remain inside a listed display (or the private output).
+Explicitly activating, minimizing, or restoring a live window may change user
+focus; activation may switch virtual desktops. Input delivery is not
+acknowledged. Private window records retain frame and content geometry
+separately. The live KWin D-Bus path exposes its reported geometry basis rather
+than asserting that it is identical to the private content geometry.
 
 ## Session model and isolation
 
@@ -311,6 +314,10 @@ kde-desktop --session user-desktop window activate WINDOW_UUID --json
 kde-desktop --session user-desktop input key WINDOW_UUID CTRL+END --json
 kde-desktop --session user-desktop input type WINDOW_UUID $'\nTODO' --json
 kde-desktop --session user-desktop input click WINDOW_UUID 0.8 0.9 --json
+kde-desktop --session user-desktop input click-at --json -- -320 240
+kde-desktop --session user-desktop input drag --steps 12 --json -- -320 240 120 400
+kde-desktop --session user-desktop window set-minimized WINDOW_UUID minimized --json
+kde-desktop --session user-desktop window set-minimized WINDOW_UUID restored --json
 kde-desktop --session agent-0123456789ab display list --json
 kde-desktop --session user-desktop screenshot --output /tmp/desktop.png
 kde-desktop --session user-desktop capabilities --json
@@ -542,8 +549,10 @@ also be layered above screenshots without changing window/display semantics.
 
 The stdio server exposes typed tools over `DesktopOperations`: `kde_window_list`,
 `kde_window_find`, `kde_window_wait`, `kde_window_inspect`,
-`kde_window_activate`, `kde_input_key`, `kde_input_type`, `kde_input_click`,
+`kde_window_activate`, `kde_window_set_minimized`, `kde_input_key`,
+`kde_input_type`, `kde_input_click`, `kde_input_click_at`, `kde_input_drag`,
 `kde_display_list`, `kde_media_list`, `kde_media_inspect`, `kde_media_control`,
+`kde_media_seek_to`,
 `kde_audio_list`, `kde_audio_set_default`, `kde_audio_set_volume`,
 `kde_audio_set_mute`, `kde_audio_route_stream`, `kde_screenshot`, and
 `kde_capabilities`. Private lifecycle tools cover
@@ -556,9 +565,9 @@ details; both transports use a `schema_version` 1 envelope, and screenshots
 return PNG image content alongside target metadata.
 
 No MCP tool accepts arbitrary shell commands. Launch is limited to argv in a
-managed private session, while window targeting, focus checks, normalized
-coordinates, capability reporting, and input receipts use the same operation
-layer as the CLI.
+managed private session, while window targeting, focus checks, window state,
+window-relative and global pointer coordinates, capability reporting, and input
+receipts use the same operation layer as the CLI.
 
 ## Suggested implementation order
 

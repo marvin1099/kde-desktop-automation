@@ -130,6 +130,9 @@ minimized/maximized and active state, geometry, and a UUID scoped to that
 session. UUIDs become stale when their window closes. The private KWin protocol
 now supports the same window list/find/inspect/activate flow when the session
 advertises protocol v13 or newer; capabilities are recorded per session.
+`window set-minimized WINDOW_ID minimized|restored` sets and verifies the
+desired state on either target. It is reversible; changing state on the live
+desktop may change focus.
 
 `input key`, `input type`, and `input click` require a window UUID and require
 that window to already be active. Activate it explicitly first. Clicks use
@@ -137,14 +140,32 @@ normalized window-relative coordinates from 0 to 1. Private KWin uses content
 geometry when available; the live target reports the geometry basis supplied by
 KWin D-Bus, so inspect `geometry_basis` before assuming the bounds are identical.
 For an inactive live window, explicit activation changes user focus and may
-switch virtual desktops. Focus-independent delivery is unresolved; do not assume
-that a targeted request can preserve focus.
+switch virtual desktops. Do not assume window-targeted requests preserve focus.
 Both use KWin fake input routed through compositor focus: the window ID is
 validated and checked active, but delivery is not atomically bound to that
 window and focus can change during submission. KWin can also ignore events; a
 round trip is not proof the app received them. Receipts report this routing and
 leave `effect_verified: false` until a fresh screenshot or independent app/file
 state confirms the result.
+
+For shell-level pointer work, `input click-at X Y` and `input drag X1 Y1 X2 Y2`
+use integer logical desktop pixels, including negative origins on multi-monitor
+layouts. Unlike window-relative `input click`, these operations are global and
+not bound to a window; they move the pointer and may change the active window.
+Inspect `display list` first. A live click must lie on a listed display, and each
+sampled point along a drag must do so as well; `--steps` is bounded from 1 to 64
+(default 8). Global pointer submissions remain best-effort and should be
+verified with a fresh screenshot or independent application state.
+
+```bash
+# Explicitly choose the live desktop; coordinates are logical desktop pixels.
+kde-desktop --session user-desktop display list --json
+kde-desktop --session user-desktop input click-at 420 310 --json
+kde-desktop --session user-desktop input click-at --json -- -320 240
+kde-desktop --session user-desktop input drag --steps 12 --json -- -320 240 700 480
+kde-desktop --session user-desktop window set-minimized WINDOW_ID minimized --json
+kde-desktop --session user-desktop window set-minimized WINDOW_ID restored --json
+```
 
 #### Targeted player example
 

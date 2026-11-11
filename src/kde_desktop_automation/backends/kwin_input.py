@@ -5,6 +5,7 @@ import ctypes.util
 import os
 import socket
 import stat
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -18,6 +19,7 @@ _KEY_STATE_PRESSED = 1
 _BTN_LEFT = 0x110
 _BTN_RIGHT = 0x111
 _BTN_MIDDLE = 0x112
+MAX_DRAG_STEPS = 64
 
 # Request order and signatures from KDE's fake-input protocol. This protocol is
 # deliberately treated as best-effort: KWin exposes no authorization or event
@@ -123,6 +125,15 @@ class InputReceipt:
                 "as effective."
             ),
         }
+
+
+def validate_drag_steps(steps: int) -> None:
+    if isinstance(steps, bool) or not isinstance(steps, int) or not 1 <= steps <= MAX_DRAG_STEPS:
+        raise InteractionError(
+            "invalid_drag_steps",
+            f"Drag steps must be an integer from 1 through {MAX_DRAG_STEPS}.",
+            details={"steps": steps, "maximum": MAX_DRAG_STEPS},
+        )
 
 
 def parse_key_chord(value: str) -> tuple[tuple[str, int, int], ...]:
@@ -395,6 +406,77 @@ class KWinFakeInput:
 
     def click(self, x: int, y: int, button: str = "left") -> InputReceipt:
         self._require_fake_input(minimum_version=3, operation="pointer input")
+        button_name, button_code = self._button(button)
+        self._request(9, ctypes.c_int32(_fixed(x)), ctypes.c_int32(_fixed(y)))
+        self._request(2, ctypes.c_uint32(button_code), ctypes.c_uint32(_KEY_STATE_PRESSED))
+        self._request(2, ctypes.c_uint32(button_code), ctypes.c_uint32(_KEY_STATE_RELEASED))
+        return InputReceipt(
+            action=f"click {button_name} at ({x}, {y}) logical output pixels",
+            events_submitted=3,
+            server_roundtrip_completed=True,
+        )
+
+    def drag(
+        self,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        *,
+        button: str = "left",
+        steps: int = 8,
+    ) -> InputReceipt:
+        self._require_fake_input(minimum_version=3, operation="pointer input")
+        button_name, button_code = self._button(button)
+        validate_drag_steps(steps)
+
+        self._request(
+            9,
+            ctypes.c_int32(_fixed(start_x)),
+            ctypes.c_int32(_fixed(start_y)),
+        )
+        release_needed = True
+        try:
+            self._request(
+                2,
+                ctypes.c_uint32(button_code),
+                ctypes.c_uint32(_KEY_STATE_PRESSED),
+            )
+            for index in range(1, steps + 1):
+                x = round(start_x + (end_x - start_x) * index / steps)
+                y = round(start_y + (end_y - start_y) * index / steps)
+                self._request(9, ctypes.c_int32(_fixed(x)), ctypes.c_int32(_fixed(y)))
+        except BaseException:
+            if release_needed:
+                with suppress(Exception):
+                    self._request(
+                        2,
+                        ctypes.c_uint32(button_code),
+                        ctypes.c_uint32(_KEY_STATE_RELEASED),
+                    )
+            raise
+        try:
+            self._request(
+                2,
+                ctypes.c_uint32(button_code),
+                ctypes.c_uint32(_KEY_STATE_RELEASED),
+            )
+        except BaseException:
+            with suppress(Exception):
+                self._request(
+                    2,
+                    ctypes.c_uint32(button_code),
+                    ctypes.c_uint32(_KEY_STATE_RELEASED),
+                )
+            raise
+        return InputReceipt(
+            action=f"drag {button_name} from ({start_x}, {start_y}) to ({end_x}, {end_y})",
+            events_submitted=steps + 3,
+            server_roundtrip_completed=True,
+        )
+
+    @staticmethod
+    def _button(button: str) -> tuple[str, int]:
         buttons = {"left": _BTN_LEFT, "middle": _BTN_MIDDLE, "right": _BTN_RIGHT}
         button_name = button.lower()
         if button_name not in buttons:
@@ -403,16 +485,7 @@ class KWinFakeInput:
                 "Mouse button must be left, middle, or right.",
                 details={"button": button},
             )
-        self._request(9, ctypes.c_int32(_fixed(x)), ctypes.c_int32(_fixed(y)))
-        self._request(2, ctypes.c_uint32(buttons[button_name]), ctypes.c_uint32(_KEY_STATE_PRESSED))
-        self._request(
-            2, ctypes.c_uint32(buttons[button_name]), ctypes.c_uint32(_KEY_STATE_RELEASED)
-        )
-        return InputReceipt(
-            action=f"click {button_name} at ({x}, {y}) logical output pixels",
-            events_submitted=3,
-            server_roundtrip_completed=True,
-        )
+        return button_name, buttons[button_name]
 
     def close(self) -> None:
         if self._fake_input is not None:

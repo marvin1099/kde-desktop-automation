@@ -20,6 +20,7 @@ from kde_desktop_automation.backends.kwin_input import (
     InputReceipt,
     KWinFakeInput,
     fake_input_version,
+    validate_drag_steps,
 )
 from kde_desktop_automation.backends.screenshots import capture_fullscreen
 from kde_desktop_automation.errors import InteractionError
@@ -300,6 +301,144 @@ class UserDesktopBackend:
         }
         return result
 
+    def click_at(self, x: int, y: int, button: str = "left") -> dict[str, Any]:
+        """Submit a pointer click at an explicit logical desktop coordinate."""
+        _validate_integer_point(x, y)
+        displays = self.list_displays()
+        if not _point_is_on_display(x, y, displays):
+            raise InteractionError(
+                "coordinates_out_of_bounds",
+                "The global pointer coordinate is outside every listed display.",
+                details={"x": x, "y": y, "displays": displays},
+            )
+        button_name = button.lower()
+        if button_name not in {"left", "middle", "right"}:
+            raise InteractionError(
+                "invalid_button",
+                "Mouse button must be left, middle, or right.",
+                details={"button": button},
+            )
+        active_before = self._observe_active_window_id()
+        with KWinFakeInput(
+            self.socket_path,
+            application_name="kde-desktop user-desktop",
+            reason="Explicit user-desktop global pointer click at logical desktop coordinates.",
+        ) as client:
+            receipt = client.click(x, y, button=button_name)
+        active_after = self._observe_active_window_id()
+        data = self._global_pointer_result(receipt, active_before, active_after)
+        data["requested_point"] = {
+            "x": x,
+            "y": y,
+            "space": "logical-desktop-pixels",
+        }
+        return data
+
+    def drag_at(
+        self,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        *,
+        button: str = "left",
+        steps: int = 8,
+    ) -> dict[str, Any]:
+        """Drag between explicit logical desktop coordinates."""
+        validate_drag_steps(steps)
+        _validate_integer_point(start_x, start_y)
+        _validate_integer_point(end_x, end_y)
+        displays = self.list_displays()
+        points = [
+            (
+                round(start_x + (end_x - start_x) * index / steps),
+                round(start_y + (end_y - start_y) * index / steps),
+            )
+            for index in range(steps + 1)
+        ]
+        outside = [point for point in points if not _point_is_on_display(*point, displays)]
+        if outside:
+            raise InteractionError(
+                "coordinates_out_of_bounds",
+                "Every sampled point in a global drag must be inside a listed display.",
+                details={"outside_points": outside, "displays": displays},
+            )
+        button_name = button.lower()
+        if button_name not in {"left", "middle", "right"}:
+            raise InteractionError(
+                "invalid_button",
+                "Mouse button must be left, middle, or right.",
+                details={"button": button},
+            )
+        active_before = self._observe_active_window_id()
+        with KWinFakeInput(
+            self.socket_path,
+            application_name="kde-desktop user-desktop",
+            reason="Explicit user-desktop global pointer drag in logical desktop coordinates.",
+        ) as client:
+            receipt = client.drag(
+                start_x,
+                start_y,
+                end_x,
+                end_y,
+                button=button_name,
+                steps=steps,
+            )
+        active_after = self._observe_active_window_id()
+        data = self._global_pointer_result(receipt, active_before, active_after)
+        data["requested_path"] = {
+            "start": {"x": start_x, "y": start_y},
+            "end": {"x": end_x, "y": end_y},
+            "steps": steps,
+            "space": "logical-desktop-pixels",
+        }
+        return data
+
+    def set_window_minimized(self, window_id: str, minimized: bool) -> dict[str, Any]:
+        """Set and verify a live window's minimized state; this may change focus."""
+        if not isinstance(minimized, bool):
+            raise InteractionError(
+                "invalid_window_state",
+                "Minimized state must be explicitly true or false.",
+                details={"minimized": minimized},
+            )
+        normalized_id = _normalize_window_id(window_id)
+        before = self.inspect_window(normalized_id)["window"]
+        if before["minimized"] != minimized:
+            option = "--add" if minimized else "--remove"
+            result = run_command(
+                [
+                    self.kdotool,
+                    "windowstate",
+                    option,
+                    "MINIMIZED",
+                    _dbus_window_id(normalized_id),
+                ],
+                env=self.environ,
+                timeout=5.0,
+            )
+            require_success(result)
+        after = self.inspect_window(normalized_id)["window"]
+        if after["minimized"] is not minimized:
+            raise InteractionError(
+                "window_state_unverified",
+                "KWin did not report the requested minimized state after the action.",
+                details={
+                    "window_id": normalized_id,
+                    "requested_minimized": minimized,
+                    "effective_minimized": after["minimized"],
+                },
+            )
+        return {
+            "target": {"kind": "user-desktop", "window_id": normalized_id},
+            "action": "set-minimized",
+            "minimized": minimized,
+            "changed": before["minimized"] != after["minimized"],
+            "verified": True,
+            "window": after,
+            "note": "Changing minimized state may change live user focus.",
+        }
+
     def screenshot(self, output: Path, *, overwrite: bool = False) -> dict[str, Any]:
         capture = capture_fullscreen(output, env=self.environ, overwrite=overwrite)
         return capture | {
@@ -329,6 +468,7 @@ class UserDesktopBackend:
             input_reason = exc.message
         key_available = window_available and version is not None and version >= 6
         click_available = window_available and version is not None and version >= 3
+        global_pointer_available = version is not None and version >= 3
         return {
             "target": {"kind": "user-desktop"},
             "capabilities": {
@@ -337,6 +477,7 @@ class UserDesktopBackend:
                 "window.wait": window_available,
                 "window.inspect": window_available,
                 "window.activate": window_available,
+                "window.set_minimized": window_available,
                 "display.inspect": shutil.which("wlpdisplays") is not None,
                 "screenshot.capture": shutil.which("spectacle") is not None,
                 "input.key": key_available,
@@ -344,7 +485,12 @@ class UserDesktopBackend:
                 "input.click": click_available,
                 "input.inject": version is not None and version >= 3,
                 "input.focus_guard": click_available,
-                "input.window_targeted": click_available,
+                "input.active_window_guard": window_available
+                and (key_available or click_available),
+                "input.global_click": global_pointer_available
+                and shutil.which("wlpdisplays") is not None,
+                "input.global_drag": global_pointer_available
+                and shutil.which("wlpdisplays") is not None,
                 "input.effect_ack": False,
                 "media.players": shutil.which("playerctl") is not None,
                 "media.inspect": shutil.which("playerctl") is not None,
@@ -365,6 +511,10 @@ class UserDesktopBackend:
             "input_semantics": {
                 "routing": "KWin fake input through the live compositor's active focus",
                 "window_targeting": "active-window-guard; focus can still change during submission",
+                "global_pointer": (
+                    "logical desktop coordinates; not window-bound; may move the pointer "
+                    "or change the active window"
+                ),
                 "atomic_window_routing": False,
                 "delivery_acknowledged": False,
             },
@@ -448,6 +598,35 @@ class UserDesktopBackend:
             )
         return data
 
+    def _global_pointer_result(
+        self,
+        receipt: InputReceipt,
+        active_before: str | None,
+        active_after: str | None,
+    ) -> dict[str, Any]:
+        data = receipt.to_dict(
+            session_id=None,
+            wayland_display=self.wayland_display,
+            target_kind="user-desktop",
+        )
+        data["target"]["keyboard_focus"] = "not targeted by this global pointer action"
+        data["active_window_before"] = active_before
+        data["active_window_after"] = active_after
+        data["focus_change_observed"] = (
+            None if active_before is None or active_after is None else active_before != active_after
+        )
+        data["input_routing"] = "global pointer coordinates; not directly window-bound"
+        data["input_semantics"] = {
+            "targeting": "global-coordinate",
+            "atomic_window_routing": False,
+            "delivery_acknowledged": False,
+        }
+        data["note"] += (
+            " This global pointer action may move the pointer or change the active window; "
+            "inspect the desktop to verify its effect."
+        )
+        return data
+
     def _active_window_id(self) -> str:
         result = run_command(
             [self.kdotool, "getactivewindow"],
@@ -462,6 +641,12 @@ class UserDesktopBackend:
                 "KWin did not return the current active window ID.",
             )
         return _normalize_window_id(output[-1])
+
+    def _observe_active_window_id(self) -> str | None:
+        try:
+            return self._active_window_id()
+        except InteractionError:
+            return None
 
 
 def _query_window_info(
@@ -606,6 +791,46 @@ def _normalize_window_id(window_id: str) -> str:
 
 def _dbus_window_id(window_id: str) -> str:
     return "{" + _normalize_window_id(window_id) + "}"
+
+
+def _validate_integer_point(x: int, y: int) -> None:
+    if (
+        isinstance(x, bool)
+        or not isinstance(x, int)
+        or isinstance(y, bool)
+        or not isinstance(y, int)
+    ):
+        raise InteractionError(
+            "invalid_coordinates",
+            "Global pointer coordinates must be integer logical desktop pixels.",
+            details={"x": x, "y": y},
+        )
+
+
+def _point_is_on_display(x: int, y: int, displays: Sequence[Mapping[str, Any]]) -> bool:
+    for display in displays:
+        if display.get("coordinate_space") != "logical-desktop-pixels":
+            continue
+        try:
+            display_x = display["x"]
+            display_y = display["y"]
+            width = display["width"]
+            height = display["height"]
+        except KeyError:
+            continue
+        if not all(
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            for value in (display_x, display_y, width, height)
+        ):
+            continue
+        if (
+            width > 0
+            and height > 0
+            and display_x <= x < display_x + width
+            and display_y <= y < display_y + height
+        ):
+            return True
+    return False
 
 
 def _wayland_socket_path(runtime_dir: Path, display: str) -> Path:

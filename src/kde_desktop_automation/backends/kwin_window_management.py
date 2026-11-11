@@ -290,6 +290,39 @@ class KWinWindowManagementClient:
         if self._callback_error is not None:
             raise self._callback_error
 
+    def set_minimized(self, window_id: str, minimized: bool) -> None:
+        normalized = _normalize_uuid(window_id)
+        window = self._windows.get(normalized)
+        if window is None or not window.initialized:
+            raise InteractionError(
+                "stale_target",
+                "The selected window no longer exists in the private KWin session.",
+                details={"window_id": normalized},
+            )
+        if not isinstance(minimized, bool):
+            raise InteractionError(
+                "invalid_window_state",
+                "Minimized state must be explicitly true or false.",
+                details={"minimized": minimized},
+            )
+        if self.window_version < 1:
+            raise InteractionError(
+                "window_capability_unavailable",
+                "The private KWin window protocol does not support state requests.",
+            )
+        self._connection.lib.wl_proxy_marshal_flags(
+            window.proxy,
+            0,
+            None,
+            self.window_version,
+            0,
+            ctypes.c_uint32(_STATE_MINIMIZED if minimized else 0),
+            ctypes.c_uint32(_STATE_MINIMIZED),
+        )
+        self._connection.roundtrip()
+        if self._callback_error is not None:
+            raise self._callback_error
+
     def _bind_manager(self) -> None:
         manager_global = self._connection.globals.get(_WINDOW_MANAGEMENT)
         if manager_global is None:
@@ -562,6 +595,30 @@ def activate_window(socket_path: Path, window_id: str) -> dict[str, Any]:
         return {
             "window": after.get(normalized_id, window),
             "active_verified": bool(after.get(normalized_id, {}).get("active")),
+        }
+
+
+def set_minimized_window(
+    socket_path: Path,
+    window_id: str,
+    minimized: bool,
+) -> dict[str, Any]:
+    normalized_id = _normalize_uuid(window_id)
+    with KWinWindowManagementClient(socket_path) as client:
+        before = {item["window_id"]: item for item in client.windows()}
+        window = before.get(normalized_id)
+        if window is None:
+            raise InteractionError(
+                "stale_target",
+                "The selected window no longer exists in the private KWin session.",
+                details={"window_id": normalized_id},
+            )
+        client.set_minimized(normalized_id, minimized)
+        after = {item["window_id"]: item for item in client.windows()}
+        result_window = after.get(normalized_id, window)
+        return {
+            "window": result_window,
+            "minimized_verified": result_window.get("minimized") is minimized,
         }
 
 

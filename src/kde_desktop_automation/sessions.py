@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from kde_desktop_automation.backends.displays import DisplayInfo
-from kde_desktop_automation.backends.kwin_input import InputReceipt
+from kde_desktop_automation.backends.kwin_input import InputReceipt, validate_drag_steps
 from kde_desktop_automation.backends.kwin_virtual import KWinVirtualBackend
 from kde_desktop_automation.errors import InteractionError
 from kde_desktop_automation.models import ProcessIdentity, SessionRecord
@@ -61,11 +61,29 @@ class SessionBackend(Protocol):
 
     def click(self, session: SessionRecord, x: int, y: int, button: str) -> InputReceipt: ...
 
+    def drag(
+        self,
+        session: SessionRecord,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        button: str,
+        steps: int,
+    ) -> InputReceipt: ...
+
     def list_windows(self, session: SessionRecord) -> list[dict[str, Any]]: ...
 
     def inspect_window(self, session: SessionRecord, window_id: str) -> dict[str, Any]: ...
 
     def activate_window(self, session: SessionRecord, window_id: str) -> dict[str, Any]: ...
+
+    def set_window_minimized(
+        self,
+        session: SessionRecord,
+        window_id: str,
+        minimized: bool,
+    ) -> dict[str, Any]: ...
 
     def send_key_to_window(
         self, session: SessionRecord, window_id: str, chord: str
@@ -402,6 +420,17 @@ class SessionManager:
 
     def click(self, session_id: str, x: int, y: int, button: str = "left") -> dict[str, Any]:
         record = self._require_running(session_id)
+        if (
+            isinstance(x, bool)
+            or not isinstance(x, int)
+            or isinstance(y, bool)
+            or not isinstance(y, int)
+        ):
+            raise InteractionError(
+                "invalid_coordinates",
+                "Click coordinates must be integer logical output pixels.",
+                details={"x": x, "y": y},
+            )
         if not (0 <= x < record.width and 0 <= y < record.height):
             raise InteractionError(
                 "coordinates_out_of_bounds",
@@ -409,7 +438,67 @@ class SessionManager:
                 details={"x": x, "y": y, "width": record.width, "height": record.height},
             )
         receipt = self.backend.click(record, x, y, button)
-        return receipt.to_dict(session_id=session_id, wayland_display=record.wayland_display)
+        result = receipt.to_dict(session_id=session_id, wayland_display=record.wayland_display)
+        result["requested_point"] = {
+            "x": x,
+            "y": y,
+            "space": "logical-desktop-pixels",
+        }
+        return _global_pointer_semantics(result)
+
+    def drag(
+        self,
+        session_id: str,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        *,
+        button: str = "left",
+        steps: int = 8,
+    ) -> dict[str, Any]:
+        validate_drag_steps(steps)
+        record = self._require_running(session_id)
+        for x, y in ((start_x, start_y), (end_x, end_y)):
+            if (
+                isinstance(x, bool)
+                or not isinstance(x, int)
+                or isinstance(y, bool)
+                or not isinstance(y, int)
+            ):
+                raise InteractionError(
+                    "invalid_coordinates",
+                    "Drag coordinates must be integer logical output pixels.",
+                    details={"x": x, "y": y},
+                )
+            if not (0 <= x < record.width and 0 <= y < record.height):
+                raise InteractionError(
+                    "coordinates_out_of_bounds",
+                    "Drag coordinates must be integer pixels inside the private output.",
+                    details={
+                        "x": x,
+                        "y": y,
+                        "width": record.width,
+                        "height": record.height,
+                    },
+                )
+        receipt = self.backend.drag(
+            record,
+            start_x,
+            start_y,
+            end_x,
+            end_y,
+            button,
+            steps,
+        )
+        result = receipt.to_dict(session_id=session_id, wayland_display=record.wayland_display)
+        result["requested_path"] = {
+            "start": {"x": start_x, "y": start_y},
+            "end": {"x": end_x, "y": end_y},
+            "steps": steps,
+            "space": "logical-desktop-pixels",
+        }
+        return _global_pointer_semantics(result)
 
     def list_windows(self, session_id: str) -> dict[str, Any]:
         record = self._require_window_management(session_id)
@@ -456,6 +545,40 @@ class SessionManager:
             "active_window_verified": bool(window["active"]),
             "window": window,
             "note": "Activation is scoped to this private KWin session.",
+        }
+
+    def set_window_minimized(
+        self,
+        session_id: str,
+        window_id: str,
+        minimized: bool,
+    ) -> dict[str, Any]:
+        if not isinstance(minimized, bool):
+            raise InteractionError(
+                "invalid_window_state",
+                "Minimized state must be explicitly true or false.",
+                details={"minimized": minimized},
+            )
+        record = self._require_window_management(session_id)
+        window = self.backend.set_window_minimized(record, window_id, minimized)
+        if window.get("minimized") is not minimized:
+            raise InteractionError(
+                "window_state_unverified",
+                "The private KWin backend did not report the requested minimized state.",
+                details={
+                    "session_id": session_id,
+                    "window_id": window_id,
+                    "requested_minimized": minimized,
+                    "effective_minimized": window.get("minimized"),
+                },
+            )
+        return {
+            "target": {"kind": "agent-session", "session_id": session_id, "window_id": window_id},
+            "action": "set-minimized",
+            "minimized": minimized,
+            "verified": True,
+            "window": window,
+            "note": "Minimized state is scoped to this private KWin session.",
         }
 
     def send_key_to_window(
@@ -522,7 +645,7 @@ class SessionManager:
                     "session_id": session_id,
                     "capability": (
                         "window.list / window.find / window.wait / window.inspect / "
-                        "window.activate / window-targeted input"
+                        "window.activate / window-targeted input / window.set_minimized"
                     ),
                     "window_management_protocol_version": record.window_management_version,
                 },
@@ -548,6 +671,18 @@ class SessionManager:
         record = self._require_running(session_id)
         receipt = action(record, value)
         return receipt.to_dict(session_id=session_id, wayland_display=record.wayland_display)
+
+
+def _global_pointer_semantics(result: dict[str, Any]) -> dict[str, Any]:
+    result["target"]["keyboard_focus"] = "not targeted by this global pointer action"
+    result["input_routing"] = "global pointer coordinates; not directly window-bound"
+    result["input_semantics"] = {
+        "targeting": "global-coordinate",
+        "atomic_window_routing": False,
+        "delivery_acknowledged": False,
+    }
+    result["note"] += " Global pointer input may move the pointer or change the active window."
+    return result
 
 
 def _validate_request(name: str, width: int, height: int) -> None:

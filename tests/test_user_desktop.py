@@ -86,6 +86,15 @@ def _backend(
         elif command[1] == "windowactivate":
             current_active[0] = command[2].strip("{}")
             output = ""
+        elif command[1] == "windowstate":
+            window_id = command[-1].strip("{}")
+            if command[2] == "--add":
+                available_records[window_id]["minimized"] = True
+            elif command[2] == "--remove":
+                available_records[window_id]["minimized"] = False
+            else:
+                raise AssertionError(f"unexpected window state command: {command}")
+            output = ""
         else:
             raise AssertionError(f"unexpected kdotool command: {command}")
         return CommandResult(command, 0, output, "")
@@ -359,6 +368,160 @@ def test_click_refuses_input_if_focus_changes_during_connection(
     assert sent == []
 
 
+def test_global_click_uses_logical_desktop_coordinates_without_window_guard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, _commands = _backend(tmp_path, monkeypatch, active_ids=[OTHER_WINDOW_ID] * 2)
+    monkeypatch.setattr(
+        backend,
+        "list_displays",
+        lambda: [
+            {
+                "name": "DP-1",
+                "x": -1920,
+                "y": 0,
+                "width": 1920,
+                "height": 1080,
+                "coordinate_space": "logical-desktop-pixels",
+            }
+        ],
+    )
+    clicks: list[tuple[int, int, str]] = []
+
+    class FakeInput:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            pass
+
+        def click(self, x: int, y: int, button: str = "left") -> InputReceipt:
+            clicks.append((x, y, button))
+            return InputReceipt("click left at (-1800, 400)", 3, True)
+
+    monkeypatch.setattr(user_desktop, "KWinFakeInput", FakeInput)
+
+    result = backend.click_at(-1800, 400)
+
+    assert clicks == [(-1800, 400, "left")]
+    assert result["requested_point"] == {
+        "x": -1800,
+        "y": 400,
+        "space": "logical-desktop-pixels",
+    }
+    assert result["active_window_before"] == OTHER_WINDOW_ID
+    assert result["active_window_after"] == OTHER_WINDOW_ID
+    assert result["focus_change_observed"] is False
+    assert result["input_semantics"]["targeting"] == "global-coordinate"
+    assert result["effect_verified"] is False
+
+
+def test_global_drag_validates_every_sampled_point_and_submits_bounded_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, _commands = _backend(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        backend,
+        "list_displays",
+        lambda: [
+            {
+                "name": "DP-1",
+                "x": 0,
+                "y": 0,
+                "width": 1920,
+                "height": 1080,
+                "coordinate_space": "logical-desktop-pixels",
+            }
+        ],
+    )
+    drags: list[tuple[int, int, int, int, str, int]] = []
+
+    class FakeInput:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            pass
+
+        def drag(self, start_x, start_y, end_x, end_y, *, button, steps):
+            drags.append((start_x, start_y, end_x, end_y, button, steps))
+            return InputReceipt("drag left from (10, 20) to (50, 40)", steps + 3, True)
+
+    monkeypatch.setattr(user_desktop, "KWinFakeInput", FakeInput)
+
+    result = backend.drag_at(10, 20, 50, 40, steps=2)
+
+    assert drags == [(10, 20, 50, 40, "left", 2)]
+    assert result["requested_path"] == {
+        "start": {"x": 10, "y": 20},
+        "end": {"x": 50, "y": 40},
+        "steps": 2,
+        "space": "logical-desktop-pixels",
+    }
+    assert result["effect_verified"] is False
+
+
+def test_global_pointer_input_rejects_points_outside_displays_before_connecting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, _commands = _backend(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        backend,
+        "list_displays",
+        lambda: [
+            {
+                "name": "DP-1",
+                "x": 0,
+                "y": 0,
+                "width": 100,
+                "height": 100,
+                "coordinate_space": "logical-desktop-pixels",
+            }
+        ],
+    )
+    connections: list[bool] = []
+
+    class FakeInput:
+        def __init__(self, *_args, **_kwargs):
+            connections.append(True)
+
+    monkeypatch.setattr(user_desktop, "KWinFakeInput", FakeInput)
+
+    with pytest.raises(InteractionError) as error:
+        backend.click_at(100, 50)
+
+    assert error.value.code == "coordinates_out_of_bounds"
+    assert connections == []
+
+
+def test_window_minimize_is_explicit_and_verified_by_readback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, commands = _backend(tmp_path, monkeypatch)
+
+    result = backend.set_window_minimized(WINDOW_ID, True)
+
+    assert commands[-2] == (
+        "/usr/bin/kdotool",
+        "windowstate",
+        "--add",
+        "MINIMIZED",
+        f"{{{WINDOW_ID}}}",
+    )
+    assert result["window"]["minimized"] is True
+    assert result["verified"] is True
+
+
 def test_live_capabilities_probe_window_service_and_report_focus_routing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -373,7 +536,10 @@ def test_live_capabilities_probe_window_service_and_report_focus_routing(
     assert result["capabilities"]["window.wait"] is True
     assert result["capabilities"]["input.key"] is True
     assert result["capabilities"]["input.focus_guard"] is True
-    assert result["capabilities"]["input.window_targeted"] is True
+    assert result["capabilities"]["input.active_window_guard"] is True
+    assert result["capabilities"]["input.global_click"] is True
+    assert result["capabilities"]["input.global_drag"] is True
+    assert result["capabilities"]["window.set_minimized"] is True
     assert result["capabilities"]["media.players"] is True
     assert result["capabilities"]["media.control"] is True
     assert result["capabilities"]["media.seek_to"] is True

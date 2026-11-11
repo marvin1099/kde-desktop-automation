@@ -31,6 +31,32 @@ class FakeOperations:
             )
         return {"target": {"kind": self.session}}
 
+    def window_set_minimized(self, window_id: str, minimized: bool) -> dict[str, Any]:
+        return {
+            "target": {"kind": self.session, "window_id": window_id},
+            "minimized": minimized,
+        }
+
+    def input_click_at(self, x: int, y: int, *, button: str = "left") -> dict[str, Any]:
+        return {"target": {"kind": self.session}, "point": [x, y], "button": button}
+
+    def input_drag(
+        self,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        *,
+        button: str = "left",
+        steps: int = 8,
+    ) -> dict[str, Any]:
+        return {
+            "target": {"kind": self.session},
+            "path": [start_x, start_y, end_x, end_y],
+            "button": button,
+            "steps": steps,
+        }
+
     def media_players(self) -> dict[str, Any]:
         return {"target": {"kind": self.session}, "players": [{"name": "vlc"}]}
 
@@ -127,9 +153,12 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         "kde_window_find",
         "kde_window_wait",
         "kde_window_activate",
+        "kde_window_set_minimized",
         "kde_input_key",
         "kde_input_type",
         "kde_input_click",
+        "kde_input_click_at",
+        "kde_input_drag",
         "kde_display_list",
         "kde_media_list",
         "kde_media_inspect",
@@ -158,9 +187,12 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         "kde_window_wait",
         "kde_window_inspect",
         "kde_window_activate",
+        "kde_window_set_minimized",
         "kde_input_key",
         "kde_input_type",
         "kde_input_click",
+        "kde_input_click_at",
+        "kde_input_drag",
         "kde_display_list",
         "kde_media_list",
         "kde_media_inspect",
@@ -212,6 +244,12 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
     click_tool = next(tool for tool in tools if tool.name == "kde_input_click")
     assert click_tool.inputSchema["properties"]["x"]["minimum"] == 0.0
     assert click_tool.inputSchema["properties"]["x"]["maximum"] == 1.0
+    drag_tool = next(tool for tool in tools if tool.name == "kde_input_drag")
+    assert drag_tool.inputSchema["properties"]["steps"]["minimum"] == 1
+    assert drag_tool.inputSchema["properties"]["steps"]["maximum"] == 64
+    assert drag_tool.inputSchema["properties"]["button"]["enum"] == ["left", "middle", "right"]
+    minimized_tool = next(tool for tool in tools if tool.name == "kde_window_set_minimized")
+    assert minimized_tool.inputSchema["properties"]["minimized"]["type"] == "boolean"
     text_tool = next(tool for tool in tools if tool.name == "kde_input_type")
     assert text_tool.inputSchema["properties"]["text"]["maxLength"] == 4096
     create_tool = next(tool for tool in tools if tool.name == "kde_session_create")
@@ -281,6 +319,43 @@ def test_mcp_media_control_requires_and_uses_explicit_session() -> None:
         "seconds": -15.0,
     }
     assert FakeOperations.selected_sessions == [session_id]
+
+
+def test_mcp_global_pointer_and_minimized_tools_use_explicit_target() -> None:
+    server = _server()
+    session_id = "agent-123456789abc"
+
+    async def invoke_all() -> list[CallToolResult]:
+        results = await asyncio.gather(
+            server.call_tool(
+                "kde_input_click_at",
+                {"session": session_id, "x": -1200, "y": 240, "button": "right"},
+            ),
+            server.call_tool(
+                "kde_input_drag",
+                {
+                    "session": session_id,
+                    "start_x": 10,
+                    "start_y": 20,
+                    "end_x": 30,
+                    "end_y": 40,
+                    "steps": 4,
+                },
+            ),
+            server.call_tool(
+                "kde_window_set_minimized",
+                {"session": session_id, "window_id": "window-uuid", "minimized": False},
+            ),
+        )
+        return [cast(CallToolResult, result) for result in results]
+
+    click, drag, minimized = asyncio.run(invoke_all())
+
+    assert click.structuredContent["data"]["point"] == [-1200, 240]
+    assert click.structuredContent["data"]["button"] == "right"
+    assert drag.structuredContent["data"]["steps"] == 4
+    assert minimized.structuredContent["data"]["minimized"] is False
+    assert FakeOperations.selected_sessions == [session_id, session_id, session_id]
 
 
 def test_mcp_media_seek_to_uses_explicit_session_and_absolute_position() -> None:
@@ -368,6 +443,8 @@ def test_mcp_instructions_state_live_desktop_safety() -> None:
     assert "kde_session_use" in instructions
     assert "player names must be selected explicitly" in instructions
     assert "PipeWire audio tools are live-user-desktop only" in instructions
+    assert "not window-bound" in instructions
+    assert "may change user focus" in instructions
 
 
 def test_mcp_session_selector_is_not_implicit_for_any_server_mode() -> None:

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from kde_desktop_automation.backends import kwin_window_management
 from kde_desktop_automation.backends.kwin_window_management import _Window, normalize_window_id
 from kde_desktop_automation.errors import InteractionError
 
@@ -77,3 +80,36 @@ def test_window_uuid_normalization_is_strict_and_target_scoped() -> None:
     assert normalize_window_id("{" + WINDOW_ID.upper() + "}") == WINDOW_ID
     with pytest.raises(InteractionError, match="UUIDs"):
         normalize_window_id("not-a-window-id")
+
+
+@pytest.mark.parametrize(("initial", "requested"), [(False, True), (True, False)])
+def test_private_minimize_operation_reports_the_read_back_state(
+    monkeypatch: pytest.MonkeyPatch,
+    initial: bool,
+    requested: bool,
+) -> None:
+    class FakeClient:
+        def __init__(self, _socket_path: Path) -> None:
+            self.minimized = initial
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            pass
+
+        def windows(self):
+            return [{"window_id": WINDOW_ID, "minimized": self.minimized}]
+
+        def set_minimized(self, window_id: str, minimized: bool) -> None:
+            assert window_id == WINDOW_ID
+            self.minimized = minimized
+
+    monkeypatch.setattr(kwin_window_management, "KWinWindowManagementClient", FakeClient)
+
+    result = kwin_window_management.set_minimized_window(Path("/fake/socket"), WINDOW_ID, requested)
+
+    assert result == {
+        "window": {"window_id": WINDOW_ID, "minimized": requested},
+        "minimized_verified": True,
+    }

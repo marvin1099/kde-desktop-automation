@@ -17,6 +17,8 @@ def test_doctor_json_requires_explicit_user_desktop_commands() -> None:
     assert report["data"]["safety"]["silent_fallback_to_user_desktop"] is False
     assert report["data"]["safety"]["explicit_user_desktop_command_required"] is True
     assert report["data"]["agent_session"]["input.inject"] is False
+    assert report["data"]["agent_session"]["input.global_click"] is False
+    assert report["data"]["user_desktop"]["input.global_drag"] is None
     assert report["data"]["agent_session"]["input.effect_ack"] is False
     assert "playerctl" in report["data"]["tools"]
     assert "wpctl" in report["data"]["tools"]
@@ -94,6 +96,95 @@ def test_media_seek_to_cli_passes_absolute_position_to_selected_target(monkeypat
     assert result.exit_code == 0, result.stdout + result.stderr
     assert calls == [("agent-123456789abc", "vlc", 142.75)]
     assert json.loads(result.stdout)["data"]["position_seconds"] == 142.75
+
+
+def test_global_pointer_and_window_state_cli_use_explicit_selected_target(monkeypatch) -> None:
+    calls = []
+
+    class FakeOperations:
+        def __init__(self, session, **_kwargs):
+            self.session = session
+
+        def input_click_at(self, x, y, *, button="left"):
+            calls.append(("click-at", self.session, x, y, button))
+            return {"target": {"kind": self.session}, "x": x, "y": y}
+
+        def input_drag(self, start_x, start_y, end_x, end_y, *, button="left", steps=8):
+            calls.append(("drag", self.session, start_x, start_y, end_x, end_y, button, steps))
+            return {"target": {"kind": self.session}, "steps": steps}
+
+        def window_set_minimized(self, window_id, minimized):
+            calls.append(("minimize", self.session, window_id, minimized))
+            return {"target": {"kind": self.session}, "minimized": minimized}
+
+    monkeypatch.setattr("kde_desktop_automation.cli.DesktopOperations", FakeOperations)
+    runner = CliRunner()
+    click = runner.invoke(
+        app,
+        [
+            "--session",
+            "user-desktop",
+            "input",
+            "click-at",
+            "--json",
+            "--",
+            "-1200",
+            "300",
+        ],
+    )
+    drag = runner.invoke(
+        app,
+        [
+            "--session",
+            "user-desktop",
+            "input",
+            "drag",
+            "--steps",
+            "4",
+            "--json",
+            "--",
+            "-10",
+            "20",
+            "40",
+            "60",
+        ],
+    )
+    minimize = runner.invoke(
+        app,
+        [
+            "--session",
+            "user-desktop",
+            "window",
+            "set-minimized",
+            "window-uuid",
+            "minimized",
+            "--json",
+        ],
+    )
+    live_alias_minimize = runner.invoke(
+        app,
+        [
+            "user-desktop",
+            "window",
+            "set-minimized",
+            "window-uuid",
+            "restored",
+            "--json",
+        ],
+    )
+
+    assert click.exit_code == 0, click.stdout + click.stderr
+    assert drag.exit_code == 0, drag.stdout + drag.stderr
+    assert minimize.exit_code == 0, minimize.stdout + minimize.stderr
+    assert live_alias_minimize.exit_code == 0, (
+        live_alias_minimize.stdout + live_alias_minimize.stderr
+    )
+    assert calls == [
+        ("click-at", "user-desktop", -1200, 300, "left"),
+        ("drag", "user-desktop", -10, 20, 40, 60, "left", 4),
+        ("minimize", "user-desktop", "window-uuid", True),
+        ("minimize", "user-desktop", "window-uuid", False),
+    ]
 
 
 def test_media_list_and_inspect_cli_return_json_for_selected_target(monkeypatch) -> None:

@@ -20,6 +20,7 @@ from kde_desktop_automation.backends.kwin_input import (
     InputReceipt,
     KWinFakeInput,
     fake_input_version,
+    validate_drag_steps,
 )
 from kde_desktop_automation.backends.kwin_window_management import (
     KWinWindowManagementClient,
@@ -31,6 +32,9 @@ from kde_desktop_automation.backends.kwin_window_management import (
 )
 from kde_desktop_automation.backends.kwin_window_management import (
     list_windows as list_private_windows,
+)
+from kde_desktop_automation.backends.kwin_window_management import (
+    set_minimized_window as set_private_window_minimized,
 )
 from kde_desktop_automation.backends.screenshots import capture_fullscreen
 from kde_desktop_automation.errors import InteractionError
@@ -405,6 +409,23 @@ class KWinVirtualBackend:
             )
         return cast(dict[str, Any], result["window"])
 
+    def set_window_minimized(
+        self,
+        session: SessionRecord,
+        window_id: str,
+        minimized: bool,
+    ) -> dict[str, Any]:
+        self._require_running(session)
+        socket_path = Path(session.runtime_dir) / session.wayland_display
+        result = set_private_window_minimized(socket_path, window_id, minimized)
+        if not result["minimized_verified"]:
+            raise InteractionError(
+                "window_state_unverified",
+                "Private KWin did not report the requested minimized state.",
+                details={"session_id": session.session_id, "window_id": window_id},
+            )
+        return cast(dict[str, Any], result["window"])
+
     def send_key_to_window(
         self,
         session: SessionRecord,
@@ -513,6 +534,40 @@ class KWinVirtualBackend:
             reason=f"Session-scoped click in private session {session.session_id}.",
         ) as client:
             return client.click(x, y, button)
+
+    def drag(
+        self,
+        session: SessionRecord,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        button: str,
+        steps: int,
+    ) -> InputReceipt:
+        validate_drag_steps(steps)
+        for x, y in ((start_x, start_y), (end_x, end_y)):
+            if not (0 <= x < session.width and 0 <= y < session.height):
+                raise InteractionError(
+                    "coordinates_out_of_bounds",
+                    "Drag coordinates must be inside the private virtual output.",
+                    details={"x": x, "y": y, "width": session.width, "height": session.height},
+                )
+        self._require_running(session)
+        socket_path = Path(session.runtime_dir) / session.wayland_display
+        with KWinFakeInput(
+            socket_path,
+            application_name="kde-desktop",
+            reason=f"Session-scoped global pointer drag in private session {session.session_id}.",
+        ) as client:
+            return client.drag(
+                start_x,
+                start_y,
+                end_x,
+                end_y,
+                button=button,
+                steps=steps,
+            )
 
     def _send_input(self, session: SessionRecord, kind: str, value: str) -> InputReceipt:
         self._require_running(session)

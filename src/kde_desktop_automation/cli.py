@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.table import Table
 from typer import Context
 
+from kde_desktop_automation.backends.kwin_input import MAX_DRAG_STEPS
 from kde_desktop_automation.backends.user_desktop import UserDesktopBackend
 from kde_desktop_automation.diagnostics import build_doctor_report
 from kde_desktop_automation.errors import InteractionError
@@ -33,9 +34,12 @@ user_desktop_app = typer.Typer(
     help="Explicitly inspect and operate the live user's KDE desktop.",
     no_args_is_help=True,
 )
-user_window_app = typer.Typer(help="Inspect and focus live desktop windows.", no_args_is_help=True)
+user_window_app = typer.Typer(
+    help="Inspect, focus, and set the minimized state of live desktop windows.",
+    no_args_is_help=True,
+)
 user_input_app = typer.Typer(
-    help="Submit best-effort input to an explicitly selected active window.",
+    help="Submit window-targeted input or global pointer actions to the live desktop.",
     no_args_is_help=True,
 )
 window_app = typer.Typer(
@@ -47,8 +51,8 @@ window_app = typer.Typer(
 )
 input_app = typer.Typer(
     help=(
-        "Send input to an explicitly selected window; choose the target with --session "
-        "before 'input'."
+        "Send input to a selected window or use global desktop pointer coordinates; "
+        "choose the target with --session before 'input'."
     ),
     no_args_is_help=True,
 )
@@ -82,6 +86,8 @@ app.add_typer(audio_app, name="audio")
 
 console = Console()
 MediaControlAction = Literal["play", "pause", "play-pause", "stop", "next", "previous", "seek"]
+WindowMinimizedState = Literal["minimized", "restored"]
+MouseButton = Literal["left", "middle", "right"]
 
 
 @app.callback()
@@ -291,6 +297,22 @@ def activate_window(
     _run(lambda: (_operations(ctx).window_activate(window_id), []), json_output=json_output)
 
 
+@window_app.command("set-minimized")
+def set_window_minimized(
+    ctx: Context,
+    window_id: str = typer.Argument(
+        ..., help="UUID from window list/find for the selected session."
+    ),
+    state: WindowMinimizedState = typer.Argument(..., help="Desired state: minimized or restored."),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Set and verify a window's minimized state; restoring reverses minimization."""
+    _run(
+        lambda: (_operations(ctx).window_set_minimized(window_id, state == "minimized"), []),
+        json_output=json_output,
+    )
+
+
 @window_app.command("wait")
 def wait_for_window(
     ctx: Context,
@@ -365,6 +387,54 @@ def input_click(
     """Click a normalized window-relative point; the named window must be active."""
     _run(
         lambda: (_operations(ctx).input_click(window_id, x, y, button=button), []),
+        json_output=json_output,
+    )
+
+
+@input_app.command("click-at")
+def input_click_at(
+    ctx: Context,
+    x: int = typer.Argument(..., help="Logical desktop x coordinate; negative origins are valid."),
+    y: int = typer.Argument(..., help="Logical desktop y coordinate; negative origins are valid."),
+    button: MouseButton = typer.Option("left", "--button", help="Mouse button."),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Click a global logical-desktop point, not a window-relative point."""
+    _run(
+        lambda: (_operations(ctx).input_click_at(x, y, button=button), []),
+        json_output=json_output,
+    )
+
+
+@input_app.command("drag")
+def input_drag(
+    ctx: Context,
+    start_x: int = typer.Argument(..., help="Logical desktop start x coordinate."),
+    start_y: int = typer.Argument(..., help="Logical desktop start y coordinate."),
+    end_x: int = typer.Argument(..., help="Logical desktop end x coordinate."),
+    end_y: int = typer.Argument(..., help="Logical desktop end y coordinate."),
+    button: MouseButton = typer.Option("left", "--button", help="Mouse button held during drag."),
+    steps: int = typer.Option(
+        8,
+        min=1,
+        max=MAX_DRAG_STEPS,
+        help=f"Interpolated movement steps (1–{MAX_DRAG_STEPS}).",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Drag between global logical-desktop points; every sampled point must be on a display."""
+    _run(
+        lambda: (
+            _operations(ctx).input_drag(
+                start_x,
+                start_y,
+                end_x,
+                end_y,
+                button=button,
+                steps=steps,
+            ),
+            [],
+        ),
         json_output=json_output,
     )
 
@@ -608,6 +678,22 @@ def activate_user_window(
     )
 
 
+@user_window_app.command("set-minimized")
+def set_user_window_minimized(
+    window_id: str = typer.Argument(..., help="UUID from user-desktop window list/find."),
+    state: WindowMinimizedState = typer.Argument(..., help="Desired state: minimized or restored."),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Set and verify a live window's minimized state; this may change user focus."""
+    _run(
+        lambda: (
+            _user_desktop_operations().window_set_minimized(window_id, state == "minimized"),
+            [],
+        ),
+        json_output=json_output,
+    )
+
+
 @user_desktop_app.command("screenshot")
 def screenshot_user_desktop(
     output: Path = typer.Option(..., "--output", "-o", help="Destination PNG path."),
@@ -660,6 +746,52 @@ def click_user_window(
     """Click a normalized point in the named window, which must already be active."""
     _run(
         lambda: (_user_desktop_operations().input_click(window_id, x, y), []),
+        json_output=json_output,
+    )
+
+
+@user_input_app.command("click-at")
+def click_user_desktop_at(
+    x: int = typer.Argument(..., help="Logical desktop x coordinate; negative origins are valid."),
+    y: int = typer.Argument(..., help="Logical desktop y coordinate; negative origins are valid."),
+    button: MouseButton = typer.Option("left", "--button", help="Mouse button."),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Click a global logical-desktop point; this can move the live pointer."""
+    _run(
+        lambda: (_user_desktop_operations().input_click_at(x, y, button=button), []),
+        json_output=json_output,
+    )
+
+
+@user_input_app.command("drag")
+def drag_user_desktop(
+    start_x: int = typer.Argument(..., help="Logical desktop start x coordinate."),
+    start_y: int = typer.Argument(..., help="Logical desktop start y coordinate."),
+    end_x: int = typer.Argument(..., help="Logical desktop end x coordinate."),
+    end_y: int = typer.Argument(..., help="Logical desktop end y coordinate."),
+    button: MouseButton = typer.Option("left", "--button", help="Mouse button held during drag."),
+    steps: int = typer.Option(
+        8,
+        min=1,
+        max=MAX_DRAG_STEPS,
+        help=f"Interpolated movement steps (1–{MAX_DRAG_STEPS}).",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Drag between live desktop points; every sampled point must be on a display."""
+    _run(
+        lambda: (
+            _user_desktop_operations().input_drag(
+                start_x,
+                start_y,
+                end_x,
+                end_y,
+                button=button,
+                steps=steps,
+            ),
+            [],
+        ),
         json_output=json_output,
     )
 

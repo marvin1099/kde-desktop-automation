@@ -24,6 +24,8 @@ class FakeBackend:
         self.running: set[str] = set()
         self.launch_calls: list[tuple[str, ...]] = []
         self.launch_delay = 0.0
+        self.drag_calls: list[tuple[int, int, int, int, str, int]] = []
+        self.minimized_calls: list[tuple[str, bool]] = []
 
     def start(self, session_id: str, name: str, width: int, height: int) -> SessionRecord:
         self.running.add(session_id)
@@ -99,6 +101,28 @@ class FakeBackend:
 
     def click(self, session: SessionRecord, x: int, y: int, button: str) -> InputReceipt:
         return InputReceipt(f"click {button} at ({x}, {y})", 3, True)
+
+    def drag(
+        self,
+        session: SessionRecord,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        button: str,
+        steps: int,
+    ) -> InputReceipt:
+        self.drag_calls.append((start_x, start_y, end_x, end_y, button, steps))
+        return InputReceipt("drag left from (10, 20) to (50, 40)", steps + 3, True)
+
+    def set_window_minimized(
+        self,
+        session: SessionRecord,
+        window_id: str,
+        minimized: bool,
+    ) -> dict[str, object]:
+        self.minimized_calls.append((window_id, minimized))
+        return {"window_id": window_id, "minimized": minimized, "active": False}
 
 
 @pytest.fixture
@@ -210,7 +234,7 @@ def test_private_window_operations_fail_closed_when_protocol_was_not_probed(
     assert error.value.code == "capability_unavailable"
     assert error.value.details["capability"] == (
         "window.list / window.find / window.wait / window.inspect / "
-        "window.activate / window-targeted input"
+        "window.activate / window-targeted input / window.set_minimized"
     )
 
 
@@ -225,6 +249,10 @@ def test_session_capabilities_follow_the_probed_fake_input_version(
     assert older["capabilities"]["input.key"] is False
     assert older["capabilities"]["input.text"] is False
     assert older["capabilities"]["input.click"] is True
+    assert older["capabilities"]["input.global_click"] is True
+    assert older["capabilities"]["input.global_drag"] is True
+    assert older["capabilities"]["input.active_window_guard"] is True
+    assert "input.window_targeted" not in older["capabilities"]
     assert older["capabilities"]["window.wait"] is True
     assert older["input_semantics"]["delivery_acknowledged"] is False
     assert "focus can still change" in older["input_semantics"]["window_targeting"]
@@ -235,6 +263,70 @@ def test_session_capabilities_follow_the_probed_fake_input_version(
     restored = SessionRecord.from_dict(legacy_record)
     assert restored.application_processes == ()
     assert restored.fake_input_version is None
+
+
+def test_global_drag_is_bounded_to_the_private_virtual_output(manager: SessionManager) -> None:
+    session = manager.create_agent_session("global-drag", 640, 480)
+
+    result = manager.drag(session.session_id, 10, 20, 50, 40, steps=4)
+
+    assert result["target"]["kind"] == "agent-session"
+    assert result["target"]["session_id"] == session.session_id
+    assert result["target"]["keyboard_focus"] == "not targeted by this global pointer action"
+    assert result["requested_path"] == {
+        "start": {"x": 10, "y": 20},
+        "end": {"x": 50, "y": 40},
+        "steps": 4,
+        "space": "logical-desktop-pixels",
+    }
+    assert manager.backend.drag_calls == [(10, 20, 50, 40, "left", 4)]
+
+    with pytest.raises(InteractionError) as error:
+        manager.drag(session.session_id, 10, 20, 640, 40, steps=4)
+
+    assert error.value.code == "coordinates_out_of_bounds"
+
+
+def test_private_global_click_reports_desktop_coordinates_and_pointer_routing(
+    manager: SessionManager,
+) -> None:
+    session = manager.create_agent_session("global-click", 640, 480)
+
+    result = manager.click(session.session_id, 20, 30)
+
+    assert result["requested_point"] == {
+        "x": 20,
+        "y": 30,
+        "space": "logical-desktop-pixels",
+    }
+    assert result["input_routing"] == "global pointer coordinates; not directly window-bound"
+    assert result["input_semantics"]["targeting"] == "global-coordinate"
+
+
+@pytest.mark.parametrize("coordinate", [True, 10.5])
+def test_private_click_rejects_non_integer_coordinates(
+    manager: SessionManager,
+    coordinate: bool | float,
+) -> None:
+    session = manager.create_agent_session("invalid-click-coordinate", 640, 480)
+
+    with pytest.raises(InteractionError) as error:
+        manager.click(session.session_id, coordinate, 20)  # type: ignore[arg-type]
+
+    assert error.value.code == "invalid_coordinates"
+
+
+def test_private_window_minimized_state_is_explicit_and_verified(manager: SessionManager) -> None:
+    session = manager.create_agent_session("minimize-window", 640, 480)
+    session = replace(session, window_management_version=13)
+    manager.store.save(session)
+
+    result = manager.set_window_minimized(session.session_id, "window-uuid", True)
+
+    assert result["action"] == "set-minimized"
+    assert result["minimized"] is True
+    assert result["verified"] is True
+    assert manager.backend.minimized_calls == [("window-uuid", True)]
 
 
 @pytest.mark.parametrize(

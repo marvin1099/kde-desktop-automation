@@ -144,6 +144,7 @@ class SessionRecord:
                 "window.wait": window_management_available,
                 "window.inspect": window_management_available,
                 "window.activate": window_management_available,
+                "window.set_minimized": window_management_available,
                 "application.launch": True,
                 "input.key": window_key_available,
                 "input.text": window_key_available,
@@ -151,12 +152,19 @@ class SessionRecord:
                 "input.inject": session_click_available,
                 "input.session.click": session_click_available,
                 "input.focus_guard": window_management_available and session_click_available,
-                "input.window_targeted": window_click_available,
+                "input.active_window_guard": window_management_available
+                and (session_key_available or session_click_available),
+                "input.global_click": session_click_available,
+                "input.global_drag": session_click_available,
                 "input.effect_ack": False,
             },
             "input_semantics": {
                 "routing": "KWin fake input through the selected compositor's active focus",
                 "window_targeting": "active-window-guard; focus can still change during submission",
+                "global_pointer": (
+                    "logical desktop coordinates; not window-bound; may move the pointer "
+                    "or change the active window"
+                ),
                 "atomic_window_routing": False,
                 "delivery_acknowledged": False,
             },

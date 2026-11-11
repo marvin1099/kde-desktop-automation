@@ -13,7 +13,7 @@ that every legacy script should become a built-in operation.
 | `Audio/*status.sh`: identify a named device, report mute state, poll for changes, or coordinate mic/speaker mute state | `audio list` discovers sinks, sources, defaults, volume/mute, and output streams. Typed operations set default, volume, explicit mute state, and route one stream. These are live-desktop-only. | No event subscription, status watcher, or coupled mute policy. A script can poll the JSON CLI, but the tool does not own a monitoring loop. |
 | `Audio/pipewire-script*.sh`, `pw-savewires.sh`, `pw-loadwires.py`, `pw-dewire.sh`: inspect, save, restore, and remove PipeWire port links | Device and output-stream inspection plus single-stream routing are supported. | No arbitrary port/link graph inspection, saved routing profile, or graph-wide unlink. A future profile operation should preview and validate exact endpoints, then apply only the selected changes; do not expose a broad `dewire` action. |
 | `Media/plaingplayer.sh`, `focusedplayer.sh`, and `skip-int-out*.sh`: find a playing MPRIS player, poll status/position, seek at configured thresholds, and associate playback with the focused window | MPRIS player list/inspect and typed transport requests are supported, including relative seek and bounded absolute seek-to. Window records expose app ID, title, and PID. | No playback watcher, configurable skip policy, or reliable MPRIS-player-to-window association. Player names and window IDs remain separate selectors. |
-| `Media/*fullscreen*.sh`, `way-fulls*.sh`, and `Windows/*`: discover windows, test fullscreen/geometry, activate a target, manipulate pointer location, and enter/recover fullscreen | Window list/find/inspect/activate and bounded wait for fullscreen or display-filling geometry are supported. Input can send a key, literal text, or a normalized click only to an already-active selected window. | Evaluate whether KWin can deliver input to an inactive live window without changing focus. Today inactive targets are rejected; explicit activation changes focus and can switch virtual desktops. No typed fullscreen/maximize/placement action, pointer-position or movement API, or fullscreen-recovery workflow. The existing click operation is not a general-purpose pointer API. |
+| `Media/*fullscreen*.sh`, `way-fulls*.sh`, and `Windows/*`: discover windows, test fullscreen/geometry, activate a target, manipulate pointer location, and enter/recover fullscreen | Window list/find/inspect/activate and bounded wait for fullscreen or display-filling geometry are supported. Window-targeted input remains active-window guarded. Global logical-coordinate click and bounded drag support shell-level pointer workflows; minimized state can be set or restored explicitly. | Explicitly activating, minimizing, or restoring a live window may change focus; activation may switch virtual desktops. No typed fullscreen/maximize/placement action, standalone pointer-position query/move, or fullscreen-recovery workflow. Global pointer actions are not window-bound and are not delivery-verified. |
 | `sunshine-virtual-display/*`: create/tear down an extra output on the user's existing KWin desktop, alongside Sunshine-specific streaming hooks | A managed private session creates its own hidden virtual KWin output; `display list` only reads logical geometry on the selected target. | Creating an additional **visible desktop-extension output** on the explicitly selected `user-desktop` is a project-fit feature, not streaming integration. It is not implemented yet. A future create operation should take bounded dimensions and verify/report the effective output; removal must be limited to outputs created and tracked by this tool. Phone/client connection, capture, and Sunshine lifecycle orchestration are out of scope. Generic physical-output disable/mode changes are separate, higher-risk features. |
 
 The current operation contract and target model are described in
@@ -33,14 +33,12 @@ Prioritize improvements in this order:
    live-only restrictions in each relevant help level. Keep JSON output
    versioned, provide exact selectors and actionable errors, and put meaningful
    bounds/enums in MCP schemas. (This pass addresses these items.)
-2. **Evaluate live input focus behavior.** Inspect the KWin fake-input protocol
-   and implementation to determine whether targeted delivery can reach an
-   inactive window without changing focus. Do not test against the user's live
-   desktop without explicit authorization. If focus-independent delivery is not
-   available, keep activation explicit, document that it changes focus (and may
-   switch virtual desktops), and never imply that inactive-window input is
-   focus-preserving. Update the README and operation receipts when the supported
-   behavior is established.
+2. **Keep input semantics explicit.** KWin fake input is compositor-routed and
+   does not acknowledge app delivery or provide atomic window routing. Keep
+   window-targeted input active-window guarded; global pointer operations use
+   logical desktop coordinates and can move the pointer or change active focus.
+   Do not claim focus preservation or test against the user's live desktop
+   without explicit authorization.
 3. **Media workflow primitives.** Absolute seek is now available through
    `media seek-to` / `kde_media_seek_to`. The relative seek still shares
    `media control` with transport actions, so its conditional `seconds` argument
@@ -53,10 +51,11 @@ Prioritize improvements in this order:
    list/preview/apply operations over exact PipeWire ports, with a validated
    diff and per-link results. Keep one-stream routing separate and avoid
    unscoped graph reset/removal.
-5. **Explicit window state actions.** Add desired-state operations such as
-   fullscreen on/off, maximize/restore, or move/resize only after their KWin
-   semantics and verification are defined. Prefer idempotent `set` operations
-   over ambiguous toggles. Pointer movement can be considered separately.
+5. **Explicit window state actions.** Minimize/restore is now an idempotent,
+   verified desired-state operation. Add fullscreen, maximize/restore, or
+   move/resize only after their KWin semantics and verification are defined;
+   prefer `set` operations over ambiguous toggles. Standalone pointer position
+   query/movement can be considered separately from click and drag.
 6. **User-visible virtual displays.** Consider a typed create/remove operation
    for an extra output attached to the existing KWin `user-desktop`. This extends
    the user's visible desktop; it is not the hidden output of an `agent-session`.

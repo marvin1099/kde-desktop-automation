@@ -13,8 +13,10 @@ private KWin session or—only when explicitly requested—the live desktop.
 
 - **Private sessions:** create, launch apps in, inspect, screenshot, and stop a
   separate virtual KWin session.
-- **Windows and input:** list/find/wait/inspect/activate windows; send guarded
-  key, text, and normalized window-relative click input; capture screenshots.
+- **Windows and input:** list/find/wait/inspect/activate windows; set a window's
+  minimized state or restore it; send guarded window-targeted key, text, and
+  normalized click input; submit global logical-coordinate clicks and bounded
+  drags; capture screenshots.
 - **Media:** list and inspect MPRIS players, then submit typed playback
   controls, including relative seek and absolute seek-to.
 - **Audio:** inspect PipeWire devices and output streams; set defaults,
@@ -121,14 +123,15 @@ or `user-desktop` only when deliberately selecting the live desktop.
   `session="user-desktop"` in MCP. Audio is live-desktop only.
 - Private session launch accepts an executable and argument vector, not a shell
   command. The session still runs as the current Unix user.
-- Targeted key/text/click input requires the window to already be active;
-  inactive-window requests are rejected, and the tool does not activate it
-  automatically. On the live desktop, explicitly activating an inactive window
-  changes user focus and may switch virtual desktops. Focus-independent delivery
-  is still being evaluated; we do not promise focus preservation. If KWin cannot
-  deliver to inactive windows without focus, activation (and its possible focus
-  stealing) will remain an explicit requirement. Input is best-effort: a
-  successful receipt does not verify an application effect.
+- Window-targeted key/text/click input requires the selected window to already be
+  active; inactive-window requests are rejected and never activate it
+  automatically. These actions are routed through compositor focus, not
+  atomically to a window. Global `input click-at` and `input drag` instead use
+  logical desktop pixels and are not window-bound; they move the pointer and may
+  change the active window. Live activation or minimize/restore can also change
+  user focus. Input is best-effort: a successful receipt does not verify an
+  application effect. Drag interpolation is limited to 64 steps, with every
+  sampled point required to lie on a display.
 - There is no accessibility tree or app-specific action API yet. Window
   placement, creation/removal of a user-visible virtual output, physical display
   configuration, arbitrary PipeWire graph patching, browser-tab discovery, and

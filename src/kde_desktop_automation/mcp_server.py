@@ -12,6 +12,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, ImageContent, TextContent, ToolAnnotations
 from pydantic import Field
 
+from kde_desktop_automation.backends.kwin_input import MAX_DRAG_STEPS
 from kde_desktop_automation.errors import InteractionError
 from kde_desktop_automation.operations import DesktopOperations
 from kde_desktop_automation.paths import RuntimePaths
@@ -30,13 +31,16 @@ Use `session='user-desktop'` to select the real user desktop explicitly for that
 call. Never infer or substitute the live desktop when a private session is
 missing or stopped. The live target must always be explicitly passed.
 
-Window input requires an already-active window. Activate it explicitly first.
-Clicks use normalized window-relative coordinates from 0 to 1. Input uses KWin
-fake input routed through compositor focus; the window ID is checked against
-active focus, but delivery is not atomically bound to that window. Focus can
-change during submission. KWin may ignore fake-input events, so a successful
-tool call is not proof that an application received the action; verify with a
-screenshot or independent application state.
+Window-targeted key, text, and normalized click input require an already-active
+window; activate it explicitly first. They use KWin fake input through
+compositor focus, so checking the window ID does not make delivery atomic to that
+window. Global pointer click/drag tools instead take logical desktop pixels and
+are not window-bound; they can move the pointer and change the active window.
+Live window activation/minimization and explicit pointer actions may change user
+focus. KWin may ignore fake-input events, so a successful tool call is not proof
+that an application received the action; verify with a screenshot or independent
+application state. Drag paths are bounded to 64 steps and must stay within the
+selected desktop's output geometry.
 
 Session IDs select a target; they are not per-client authorization tokens. MCP
 clients sharing this server share the Unix user's authority over managed private
@@ -81,6 +85,7 @@ PrivateSessionId = Annotated[
 ]
 WindowId = Annotated[str, Field(min_length=1, max_length=64)]
 Selector = Annotated[str, Field(min_length=1, max_length=512)]
+LogicalCoordinate = Annotated[int, Field(strict=True)]
 MediaAction = Literal["play", "pause", "play-pause", "stop", "next", "previous", "seek"]
 AudioDirection = Literal["sink", "source"]
 LiveDesktopTarget = Literal["user-desktop"]
@@ -304,6 +309,29 @@ def create_mcp_server(
         return _invoke(lambda: desktop_operations(session).window_activate(window_id))
 
     @server.tool(
+        name="kde_window_set_minimized",
+        description=(
+            "Set a window's minimized state explicitly and verify it. Setting false restores it; "
+            "live changes may change user focus."
+        ),
+        annotations=ToolAnnotations(
+            destructiveHint=True,
+            idempotentHint=True,
+            openWorldHint=True,
+        ),
+        structured_output=False,
+    )
+    def window_set_minimized(
+        session: TargetSession,
+        window_id: WindowId,
+        minimized: bool,
+    ) -> CallToolResult:
+        """Set an explicit minimized boolean for one window in the selected session."""
+        return _invoke(
+            lambda: desktop_operations(session).window_set_minimized(window_id, minimized)
+        )
+
+    @server.tool(
         name="kde_input_key",
         description="Send a key chord to an already-active target window; no implicit activation.",
         annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True),
@@ -355,6 +383,56 @@ def create_mcp_server(
                 x,
                 y,
                 button=button,
+            )
+        )
+
+    @server.tool(
+        name="kde_input_click_at",
+        description=(
+            "Click a global logical-desktop pixel coordinate, not a window-relative point. "
+            "The point must lie on a listed display; this may move the pointer or change focus."
+        ),
+        annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True),
+        structured_output=False,
+    )
+    def input_click_at(
+        session: TargetSession,
+        x: LogicalCoordinate,
+        y: LogicalCoordinate,
+        button: Literal["left", "middle", "right"] = "left",
+    ) -> CallToolResult:
+        """Click global logical desktop pixels, including negative multi-monitor origins."""
+        return _invoke(lambda: desktop_operations(session).input_click_at(x, y, button=button))
+
+    @server.tool(
+        name="kde_input_drag",
+        description=(
+            "Drag between global logical-desktop pixel coordinates. Every interpolated point "
+            f"must lie on a listed display; steps are limited to 1–{MAX_DRAG_STEPS}. "
+            "This can move the pointer or change the active window and is not bound to a "
+            "particular window."
+        ),
+        annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True),
+        structured_output=False,
+    )
+    def input_drag(
+        session: TargetSession,
+        start_x: LogicalCoordinate,
+        start_y: LogicalCoordinate,
+        end_x: LogicalCoordinate,
+        end_y: LogicalCoordinate,
+        button: Literal["left", "middle", "right"] = "left",
+        steps: Annotated[int, Field(strict=True, ge=1, le=MAX_DRAG_STEPS)] = 8,
+    ) -> CallToolResult:
+        """Submit a bounded global pointer drag in logical desktop coordinates."""
+        return _invoke(
+            lambda: desktop_operations(session).input_drag(
+                start_x,
+                start_y,
+                end_x,
+                end_y,
+                button=button,
+                steps=steps,
             )
         )
 

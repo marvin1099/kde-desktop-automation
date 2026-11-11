@@ -32,6 +32,28 @@ class FakeManager:
         self.calls.append(("find_window", session_id, app_id, title))
         return {"target": {"kind": "agent-session", "session_id": session_id}, "window": {}}
 
+    def click(self, session_id: str, x: int, y: int, button: str = "left"):
+        self.calls.append(("click", session_id, x, y, button))
+        return {"target": {"kind": "agent-session", "session_id": session_id}}
+
+    def drag(
+        self,
+        session_id: str,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        *,
+        button: str = "left",
+        steps: int = 8,
+    ):
+        self.calls.append(("drag", session_id, start_x, start_y, end_x, end_y, button, steps))
+        return {"target": {"kind": "agent-session", "session_id": session_id}}
+
+    def set_window_minimized(self, session_id: str, window_id: str, minimized: bool):
+        self.calls.append(("set_window_minimized", session_id, window_id, minimized))
+        return {"target": {"kind": "agent-session", "session_id": session_id}}
+
     def get_session(self, _session_id: str) -> dict[str, Any]:
         return self.capability_record
 
@@ -43,6 +65,27 @@ class FakeUserDesktop:
     def list_windows(self) -> dict[str, Any]:
         self.calls.append(("list_windows",))
         return {"target": {"kind": "user-desktop"}, "count": 0, "windows": []}
+
+    def click_at(self, x: int, y: int, button: str = "left") -> dict[str, Any]:
+        self.calls.append(("click_at", x, y, button))
+        return {"target": {"kind": "user-desktop"}}
+
+    def drag_at(
+        self,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        *,
+        button: str = "left",
+        steps: int = 8,
+    ) -> dict[str, Any]:
+        self.calls.append(("drag_at", start_x, start_y, end_x, end_y, button, steps))
+        return {"target": {"kind": "user-desktop"}}
+
+    def set_window_minimized(self, window_id: str, minimized: bool) -> dict[str, Any]:
+        self.calls.append(("set_window_minimized", window_id, minimized))
+        return {"target": {"kind": "user-desktop", "window_id": window_id}}
 
 
 def test_private_default_target_is_resolved_without_live_desktop_fallback(monkeypatch) -> None:
@@ -92,6 +135,36 @@ def test_explicit_live_target_never_constructs_private_manager(monkeypatch) -> N
 
     assert result["target"]["kind"] == "user-desktop"
     assert live_desktop.calls == [("list_windows",)]
+
+
+def test_global_pointer_and_minimize_operations_use_the_explicit_live_target() -> None:
+    live_desktop = FakeUserDesktop()
+    operations = DesktopOperations("user-desktop", user_desktop=live_desktop)  # type: ignore[arg-type]
+
+    operations.input_click_at(-400, 250)
+    operations.input_drag(10, 20, 30, 40, steps=4)
+    operations.window_set_minimized("window-uuid", True)
+
+    assert live_desktop.calls == [
+        ("click_at", -400, 250, "left"),
+        ("drag_at", 10, 20, 30, 40, "left", 4),
+        ("set_window_minimized", "window-uuid", True),
+    ]
+
+
+def test_global_pointer_operations_route_to_selected_private_session() -> None:
+    manager = FakeManager()
+    operations = DesktopOperations("agent-222222222222", manager=manager)  # type: ignore[arg-type]
+
+    operations.input_click_at(10, 20)
+    operations.input_drag(10, 20, 30, 40, steps=4)
+    operations.window_set_minimized("window-uuid", False)
+
+    assert manager.calls == [
+        ("click", "agent-222222222222", 10, 20, "left"),
+        ("drag", "agent-222222222222", 10, 20, 30, 40, "left", 4),
+        ("set_window_minimized", "agent-222222222222", "window-uuid", False),
+    ]
 
 
 def test_environment_session_overrides_private_default(monkeypatch) -> None:
