@@ -77,11 +77,16 @@ request submission, not verified playback effect. Absolute seek is bounded to
 device selection, and per-application audio routing are not implemented.
 
 Targeted input currently means **active-window guarded**, not compositor-atomic
-per-window routing. The input capability/result reports that focus can change
-during submission and that delivery is not acknowledged. Private window records
-retain frame and content geometry separately. The live KWin D-Bus path exposes
-its reported geometry basis rather than asserting that it is identical to the
-private content geometry.
+per-window routing. Key, text, and click requests require the target to already
+be active; an inactive target is rejected and is not automatically activated.
+Explicitly activating an inactive live window changes user focus and may switch
+virtual desktops. Whether KWin offers a reliable focus-independent delivery path
+is unresolved and must be evaluated; do not promise that live input preserves
+focus. If it is not supported, controlling an inactive window requires explicit
+activation and may steal focus. Input delivery is not acknowledged. Private
+window records retain frame and content geometry separately. The live KWin D-Bus
+path exposes its reported geometry basis rather than asserting that it is
+identical to the private content geometry.
 
 ## Session model and isolation
 
@@ -117,8 +122,8 @@ It can be useful when the user independently arranges a remote client or another
 display consumer. That connection/streaming path is not a goal of this tool; the
 potential feature is creating, verifying, tracking, and safely removing the
 additional KWin output itself, with bounded requested dimensions and a report of
-the effective geometry. Creation should not unexpectedly take focus or alter
-physical outputs.
+the effective geometry. Evaluate and report any focus effects; do not promise
+focus preservation before it has been tested. Avoid changing physical outputs.
 
 The agent should use `agent-session` by default and must never fall back to
 `user-desktop` just because its private session is unavailable. Every window,

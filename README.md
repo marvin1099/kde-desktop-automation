@@ -121,7 +121,13 @@ or `user-desktop` only when deliberately selecting the live desktop.
   `session="user-desktop"` in MCP. Audio is live-desktop only.
 - Private session launch accepts an executable and argument vector, not a shell
   command. The session still runs as the current Unix user.
-- Input is focus-guarded and best-effort. Recheck state independently; a
+- Targeted key/text/click input requires the window to already be active;
+  inactive-window requests are rejected, and the tool does not activate it
+  automatically. On the live desktop, explicitly activating an inactive window
+  changes user focus and may switch virtual desktops. Focus-independent delivery
+  is still being evaluated; we do not promise focus preservation. If KWin cannot
+  deliver to inactive windows without focus, activation (and its possible focus
+  stealing) will remain an explicit requirement. Input is best-effort: a
   successful receipt does not verify an application effect.
 - There is no accessibility tree or app-specific action API yet. Window
   placement, creation/removal of a user-visible virtual output, physical display

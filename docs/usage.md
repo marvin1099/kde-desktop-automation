@@ -136,6 +136,9 @@ that window to already be active. Activate it explicitly first. Clicks use
 normalized window-relative coordinates from 0 to 1. Private KWin uses content
 geometry when available; the live target reports the geometry basis supplied by
 KWin D-Bus, so inspect `geometry_basis` before assuming the bounds are identical.
+For an inactive live window, explicit activation changes user focus and may
+switch virtual desktops. Focus-independent delivery is unresolved; do not assume
+that a targeted request can preserve focus.
 Both use KWin fake input routed through compositor focus: the window ID is
 validated and checked active, but delivery is not atomically bound to that
 window and focus can change during submission. KWin can also ignore events; a
