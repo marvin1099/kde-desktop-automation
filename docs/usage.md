@@ -116,6 +116,13 @@ kde-desktop --session "$TARGET" screenshot --output /tmp/after.png --json
 kde-desktop --session "$TARGET" capabilities --json
 ```
 
+`display list` is read-only today. Creating an extra virtual output on
+`user-desktop` is a proposed feature that would extend the user's visible KWin
+desktop; it is distinct from the hidden output created inside a private session.
+The proposed operation would accept bounded dimensions, verify the effective
+geometry, and manage the output lifecycle only—not Sunshine, streaming, or
+connecting a phone/client.
+
 `window find` takes an exact `--app-id` and/or a case-insensitive `--title`
 substring. It returns candidates as an error if more than one window matches;
 it never chooses silently. Inspection returns title, app ID, fullscreen,

@@ -14,7 +14,7 @@ that every legacy script should become a built-in operation.
 | `Audio/pipewire-script*.sh`, `pw-savewires.sh`, `pw-loadwires.py`, `pw-dewire.sh`: inspect, save, restore, and remove PipeWire port links | Device and output-stream inspection plus single-stream routing are supported. | No arbitrary port/link graph inspection, saved routing profile, or graph-wide unlink. A future profile operation should preview and validate exact endpoints, then apply only the selected changes; do not expose a broad `dewire` action. |
 | `Media/plaingplayer.sh`, `focusedplayer.sh`, and `skip-int-out*.sh`: find a playing MPRIS player, poll status/position, seek at configured thresholds, and associate playback with the focused window | MPRIS player list/inspect and typed transport requests are supported, including relative seek and bounded absolute seek-to. Window records expose app ID, title, and PID. | No playback watcher, configurable skip policy, or reliable MPRIS-player-to-window association. Player names and window IDs remain separate selectors. |
 | `Media/*fullscreen*.sh`, `way-fulls*.sh`, and `Windows/*`: discover windows, test fullscreen/geometry, activate a target, manipulate pointer location, and enter/recover fullscreen | Window list/find/inspect/activate and bounded wait for fullscreen or display-filling geometry are supported. Input can send a key, literal text, or a normalized click to an already-active selected window. | No typed fullscreen/maximize/placement action, pointer-position or movement API, or fullscreen-recovery workflow. The existing click operation is not a general-purpose pointer API. |
-| `sunshine-virtual-display/*`: create and tear down an output for a streaming lifecycle | A managed private session creates its own virtual KWin output; `display list` reads logical display geometry. | No general live-output enable/disable, mode/position control, arbitrary display lifecycle, or Sunshine integration. Keep live display changes behind explicit ownership and target checks if added. |
+| `sunshine-virtual-display/*`: create/tear down an extra output on the user's existing KWin desktop, alongside Sunshine-specific streaming hooks | A managed private session creates its own hidden virtual KWin output; `display list` only reads logical geometry on the selected target. | Creating an additional **visible desktop-extension output** on the explicitly selected `user-desktop` is a project-fit feature, not streaming integration. It is not implemented yet. A future create operation should take bounded dimensions and verify/report the effective output; removal must be limited to outputs created and tracked by this tool. Phone/client connection, capture, and Sunshine lifecycle orchestration are out of scope. Generic physical-output disable/mode changes are separate, higher-risk features. |
 
 The current operation contract and target model are described in
 [`interface.md`](interface.md). CLI recipes and scripting patterns are in
@@ -49,9 +49,15 @@ Prioritize improvements in this order:
    fullscreen on/off, maximize/restore, or move/resize only after their KWin
    semantics and verification are defined. Prefer idempotent `set` operations
    over ambiguous toggles. Pointer movement can be considered separately.
-5. **Display lifecycle.** Treat live output changes as a high-impact feature:
-   require an explicit live target, report the requested/effective state, and
-   provide a recovery path before exposing enable/disable or mode changes.
+5. **User-visible virtual displays.** Consider a typed create/remove operation
+   for an extra output attached to the existing KWin `user-desktop`. This extends
+   the user's visible desktop; it is not the hidden output of an `agent-session`.
+   Require explicit live-target selection, verify and report the created output,
+   accept bounded requested dimensions, avoid stealing focus or rearranging
+   physical outputs, track ownership, and only remove outputs created by this
+   tool. Do not add Sunshine streaming, phone connection, or capture
+   orchestration. Generic physical-output disable/mode/position changes remain
+   separate and higher risk.
 6. **Optional event/wait support.** Replace fragile shell polling only where a
    bounded, cancellable wait materially improves a workflow. Keep long-running
    watchers opt-in and outside basic list/inspect calls.

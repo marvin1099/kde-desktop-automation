@@ -124,8 +124,10 @@ or `user-desktop` only when deliberately selecting the live desktop.
 - Input is focus-guarded and best-effort. Recheck state independently; a
   successful receipt does not verify an application effect.
 - There is no accessibility tree or app-specific action API yet. Window
-  placement, live display configuration, arbitrary PipeWire graph patching,
-  browser-tab discovery, and OCR-driven controls are not implemented.
+  placement, creation/removal of a user-visible virtual output, physical display
+  configuration, arbitrary PipeWire graph patching, browser-tab discovery, and
+  OCR-driven controls are not implemented. A visible desktop-extension output
+  is a roadmap candidate; streaming and client connection are out of scope.
 
 ## Development
 

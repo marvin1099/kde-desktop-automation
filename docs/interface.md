@@ -97,7 +97,7 @@ Keep these modes distinct:
 | Mode | What it means | Isolation |
 | --- | --- | --- |
 | `user-desktop` | The user's normal KWin/Plasma session and physical outputs | Shared with the user; input, focus, clipboard, and windows can be affected |
-| `shared-virtual-output` | An extra/headless output attached to that same KWin session | Visually separate, but may still share KWin focus and the input seat; not sufficient to promise the user can keep playing undisturbed |
+| `shared-virtual-output` | An extra virtual output attached to the user's existing KWin desktop; it extends the same visible desktop | Not a separate session: windows and desktop content may appear there, while KWin focus, input, clipboard, and session services remain shared |
 | `agent-session` | A separate KWin/Wayland session with its own hidden output, window tree, input route, and capture | Preferred default; use a restricted OS identity/sandbox and explicit file access if actual security isolation is required |
 | `exclusive-remote` | A remote session that takes over/locks the host display while connected | Useful for privacy, but displaces the local user's display session instead of running alongside them |
 
@@ -110,6 +110,15 @@ user's existing KWin session is not enough by itself: it may still share global
 keyboard focus, session services, clipboard, and input devices. The agent input
 adapter must be bound to the agent session, not the host's physical-session
 `dotool` device.
+
+A user-visible shared virtual output is a distinct use case: it adds screen area
+to the user's existing desktop rather than hiding a separate desktop from them.
+It can be useful when the user independently arranges a remote client or another
+display consumer. That connection/streaming path is not a goal of this tool; the
+potential feature is creating, verifying, tracking, and safely removing the
+additional KWin output itself, with bounded requested dimensions and a report of
+the effective geometry. Creation should not unexpectedly take focus or alter
+physical outputs.
 
 The agent should use `agent-session` by default and must never fall back to
 `user-desktop` just because its private session is unavailable. Every window,
@@ -144,6 +153,15 @@ separate user session. KWin's nested/virtual backend is another candidate for a
 headless agent compositor; test it with its own Wayland socket and D-Bus session
 before relying on it for a full Plasma desktop. Plasma's per-screen virtual
 desktops organize windows but are not a security boundary either.
+
+For a shared virtual output, the Garuda `sunshine-virtual-display` scripts
+separate output creation from Sunshine connection management and describe
+KRFB's virtual-monitor helper (a compositor-level output) and EVDI (a DRM
+connector) as alternative backends. These are implementation candidates, not
+current support commitments. The project goal would be the explicitly selected
+live-desktop output lifecycle only; Sunshine setup, streaming, and phone/client
+connection remain outside scope. This must stay separate from `agent-session`,
+whose virtual output is hidden and belongs to its own compositor.
 
 Private KWin's Plasma window protocol and live KWin's kdotool/D-Bus path now
 provide matching window metadata and activation commands; both targets use the
