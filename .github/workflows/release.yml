@@ -1,0 +1,45 @@
+name: Draft GitHub release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  draft-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: 0.13.7
+      - name: Confirm tag matches project version
+        run: uv run python scripts/check_release_tag.py "$GITHUB_REF_NAME"
+      - name: Install locked dependencies
+        run: uv sync --locked --all-groups
+      - name: Run release checks
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run mypy src
+          uv run pytest -q
+      - name: Build release distributions
+        run: |
+          uv build --out-dir dist
+          sha256sum dist/*.whl dist/*.tar.gz > dist/SHA256SUMS
+      - name: Create draft release with artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/SHA256SUMS

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import ctypes
+import gc
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -80,6 +83,32 @@ def test_window_uuid_normalization_is_strict_and_target_scoped() -> None:
     assert normalize_window_id("{" + WINDOW_ID.upper() + "}") == WINDOW_ID
     with pytest.raises(InteractionError, match="UUIDs"):
         normalize_window_id("not-a-window-id")
+
+
+def test_wayland_listener_function_pointer_array_is_kept_alive() -> None:
+    class FakeLibrary:
+        listener_address: int | None = None
+
+        def wl_proxy_add_listener(self, _proxy, listener, _data) -> int:
+            self.listener_address = ctypes.cast(listener, ctypes.c_void_p).value
+            return 0
+
+    class FakeConnection:
+        lib = FakeLibrary()
+
+    callback_type = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p)
+    callback = callback_type(lambda _data, _proxy: None)
+
+    callback_refs: list[Any] = [callback]
+    kwin_window_management._add_listener(FakeConnection(), 1, callback_refs)
+    gc.collect()
+
+    assert FakeConnection.lib.listener_address is not None
+    assert len(callback_refs) == 2
+    listener_array = callback_refs[-1]
+    assert isinstance(listener_array, ctypes.Array)
+    assert listener_array._type_ is ctypes.c_void_p
+    assert listener_array[0] == ctypes.cast(callback, ctypes.c_void_p).value
 
 
 @pytest.mark.parametrize(("initial", "requested"), [(False, True), (True, False)])

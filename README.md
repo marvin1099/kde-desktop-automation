@@ -1,101 +1,70 @@
 # KDE Desktop Automation
 
-A target-aware CLI, Python toolkit, and MCP server for automating KDE Plasma.
-Use one operation model from scripts or AI clients, targeting either a managed
-private KWin session or—only when explicitly requested—the live desktop.
+A Python toolkit, CLI, and MCP server for inspecting and automating KDE Plasma.
+It defaults to a separate, private KWin session; access to the live desktop must
+be selected explicitly.
 
-> **Prototype:** capabilities depend on the installed KDE/Wayland and PipeWire
-> versions. Input submission is best-effort, not proof that an application
-> received or acted on an event. A private session is isolated from the user's
-> compositor, but it is not a security sandbox.
+[Codeberg (primary)](https://codeberg.org/marvin1099/kde-desktop-automation) ·
+[GitHub mirror](https://github.com/marvin1099/kde-desktop-automation)
 
-## What it supports
+> **Prototype:** support depends on the installed KDE/Wayland components and
+> system utilities. Input is best-effort and does not prove an application acted
+> on it. A private session isolates its compositor and home directory, but is
+> **not a security sandbox** and runs as your Unix user.
 
-- **Private sessions:** create, launch apps in, inspect, screenshot, and stop a
-  separate virtual KWin session.
-- **Windows and input:** list/find/wait/inspect/activate windows; set a window's
-  minimized state or restore it; send guarded window-targeted key, text, and
-  normalized click input; submit global logical-coordinate clicks and bounded
-  drags; capture screenshots.
-- **Media:** list and inspect MPRIS players, then submit typed playback
-  controls, including relative seek and absolute seek-to.
-- **Audio:** inspect PipeWire devices and output streams; set defaults,
-  volume/mute, or route one verified stream. Audio operations are live-desktop
-  only.
-- **AI integration:** an stdio MCP server exposes the same target-aware
-  operations, plus private-session lifecycle tools.
+## What it can do
 
-The current feature boundary and design direction are in
-[`docs/interface.md`](docs/interface.md). The review of useful automation
-patterns and proposed next steps is in
-[`docs/automation-roadmap.md`](docs/automation-roadmap.md).
+- Create private virtual desktops and launch applications inside them.
+- Observe windows, displays, pointer/focus context, and optional screenshots.
+- Find, inspect, activate, minimize/restore, and place windows; send guarded
+  keyboard/text input and coordinate clicks/drags.
+- Inspect and control MPRIS media players.
+- Inspect and change live PipeWire audio settings (live desktop only).
+- Expose the same target-aware operations through an stdio MCP server.
 
-## Install and try a private session
+Capabilities vary by target and installed tools. There is no accessibility tree,
+OCR-based control discovery, or app-specific action API yet. See the
+[usage guide](docs/usage.md) for exact commands and limitations.
 
-From a checkout with [uv](https://docs.astral.sh/uv/) installed:
+## Requirements
+
+- Linux with KDE Plasma on Wayland; private sessions use KWin's virtual-output
+  backend. Exact support depends on the installed Plasma/KWin version.
+- Python 3.12 or newer and [uv](https://docs.astral.sh/uv/) to install from a
+  checkout.
+- Optional system utilities provide additional features. Run `kde-desktop
+  doctor` to see which are available; per-target `capabilities` reports what can
+  be used.
+
+## Quick start
 
 ```bash
+git clone https://codeberg.org/marvin1099/kde-desktop-automation.git
+cd kde-desktop-automation
 uv sync
-uv run kde-desktop --help
+uv run kde-desktop doctor
 uv run kde-desktop session create --name agent --width 1280 --height 800 --json
 ```
 
-Use the `session_id` returned by `session create` for subsequent commands:
+Copy the `session_id` from the result and use it for commands in that private
+desktop:
 
 ```bash
-SESSION_ID='agent-0123456789ab'
-uv run kde-desktop --session "$SESSION_ID" capabilities --json
-uv run kde-desktop --session "$SESSION_ID" window list --json
+SESSION_ID='agent-...'
+uv run kde-desktop --session "$SESSION_ID" observe --json
 uv run kde-desktop session launch "$SESSION_ID" -- kate --new /tmp/agent-note.txt
 uv run kde-desktop --session "$SESSION_ID" screenshot --output /tmp/agent.png --json
 uv run kde-desktop session stop "$SESSION_ID"
 ```
 
-The private session has its own compositor, Wayland socket, D-Bus session,
-runtime directory, and application home. It does not see windows or players on
-the host desktop.
-
-## Choose a target explicitly
-
-Put the global `--session` option **before** the operation group:
-
-```bash
-kde-desktop --session "$SESSION_ID" window list --json
-kde-desktop --session user-desktop window list --json
-kde-desktop --session user-desktop media list --json
-kde-desktop --session user-desktop audio list --json
-```
-
-For shared CLI operations, omission selects `KDE_DESKTOP_SESSION`, then the
-configured private default. It never falls back to the live desktop. Set
-`KDE_DESKTOP_SESSION` only when a persistent private default is useful; pass
-`--session` explicitly in multi-agent scripts. MCP calls always require a
-`session` argument and do not use CLI defaults.
-
-### Help and scripting
-
-Help is available at each level. Start at the top level, then inspect a group
-or a specific operation:
-
-```bash
-kde-desktop --help
-kde-desktop window --help
-kde-desktop window wait --help
-kde-desktop audio route-stream --help
-kde-desktop media seek-to --help
-```
-
-Use `--json` for versioned output that scripts can parse. A safe discovery flow
-is `capabilities` → list/find an exact target → inspect → act → inspect or
-screenshot again. Ambiguous window matches fail with candidate details rather
-than silently selecting one. See [`docs/usage.md`](docs/usage.md) for command
-examples, target semantics, and safety details, and
-[`docs/examples.md`](docs/examples.md) for composable scripts.
+To deliberately target the real desktop, pass `--session user-desktop` on each
+command. Private sessions cannot see host windows or media players. Do not run
+untrusted applications in them: they are not an OS-level sandbox.
 
 ## MCP server
 
-Install the checkout with `uv sync`, then configure your MCP client to launch
-`kde-desktop-mcp`:
+After `uv sync`, configure your MCP client to launch `kde-desktop-mcp` from this
+checkout:
 
 ```json
 {
@@ -113,50 +82,50 @@ Install the checkout with `uv sync`, then configure your MCP client to launch
 }
 ```
 
-Each desktop tool call takes an explicit `session`. Use a managed session ID,
-or `user-desktop` only when deliberately selecting the live desktop.
+Every MCP desktop call requires an explicit `session` value: a managed session
+ID or `user-desktop` when intentionally using the live desktop.
 
-## Safety and limits
+## Safety essentials
 
-- Live-desktop access requires an explicit selection: `--session user-desktop`
-  for shared commands, the dedicated `user-desktop` CLI namespace, or
-  `session="user-desktop"` in MCP. Audio is live-desktop only.
-- Private session launch accepts an executable and argument vector, not a shell
-  command. The session still runs as the current Unix user.
-- Window-targeted key/text/click input requires the selected window to already be
-  active; inactive-window requests are rejected and never activate it
-  automatically. These actions are routed through compositor focus, not
-  atomically to a window. Global `input click-at` and `input drag` instead use
-  logical desktop pixels and are not window-bound; they move the pointer and may
-  change the active window. Live activation or minimize/restore can also change
-  user focus. Input is best-effort: a successful receipt does not verify an
-  application effect. Drag interpolation is limited to 64 steps, with every
-  sampled point required to lie on a display.
-- There is no accessibility tree or app-specific action API yet. Window
-  placement, creation/removal of a user-visible virtual output, physical display
-  configuration, arbitrary PipeWire graph patching, browser-tab discovery, and
-  OCR-driven controls are not implemented. A visible desktop-extension output
-  is a roadmap candidate; streaming and client connection are out of scope.
+- A missing or stopped private session never falls back to the live desktop.
+- Window-targeted input requires that window to already be active; it is guarded
+  by focus, not atomically routed to the window.
+- Global clicks and drags use logical desktop coordinates, move the pointer, and
+  may change focus. A successful input receipt is not proof of an app effect;
+  inspect again and verify the result independently.
+- Window placement is a KWin frame-geometry request. KWin may constrain it; the
+  tool reads back and reports the effective geometry.
+- Audio controls are live-desktop-only. Private sessions do not provide an
+  isolated audio server.
+
+## Guides
+
+- [CLI and MCP usage](docs/usage.md)
+- [Examples](docs/examples.md)
+- [Interface and design notes](docs/interface.md)
+- [Automation roadmap](docs/automation-roadmap.md)
+- [Release process](docs/releasing.md)
 
 ## Development
 
 ```bash
 uv sync --all-groups
-uv run pytest
+uv run pytest -q
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy src
+uv build
 ```
 
-The private-KWin integration test starts its own compositor and is opt-in:
+The private-KWin tests are opt-in. The Dolphin-to-Kate drag test additionally
+requires Dolphin, Kate, `kdotool`, and `wl-paste`:
 
 ```bash
-KDE_DESKTOP_RUN_KWIN_INTEGRATION=1 uv run pytest tests/test_kwin_integration.py -q
+KDE_DESKTOP_RUN_KWIN_INTEGRATION=1 \
+KDE_DESKTOP_RUN_KWIN_DND_INTEGRATION=1 \
+uv run pytest tests/test_kwin_integration.py::test_private_dolphin_drag_and_drop_opens_file_in_kate -q
 ```
 
-The live-desktop integration test is separate and read-only, but requires
-explicit opt-in on a KDE Wayland desktop:
+## License
 
-```bash
-KDE_DESKTOP_RUN_USER_DESKTOP_INTEGRATION=1 uv run pytest tests/test_user_desktop_integration.py -q
-```
+Licensed under the [GNU Affero General Public License v3.0 only](LICENSE).

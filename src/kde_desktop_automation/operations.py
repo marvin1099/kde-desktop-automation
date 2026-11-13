@@ -3,10 +3,17 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from math import isfinite
 from pathlib import Path
 from typing import Any, cast
+from uuid import uuid4
 
+from kde_desktop_automation.backends.kwin_input import (
+    DEFAULT_DRAG_DURATION_MS,
+    DEFAULT_DRAG_END_PAUSE_MS,
+    DEFAULT_DRAG_HOLD_MS,
+)
 from kde_desktop_automation.backends.media_players import MprisBackend
 from kde_desktop_automation.backends.pipewire_audio import PipeWireAudioBackend
 from kde_desktop_automation.backends.user_desktop import UserDesktopBackend
@@ -107,6 +114,78 @@ class DesktopOperations:
         return self._private_manager().set_window_minimized(
             self._private_session_id(), window_id, minimized
         )
+
+    def window_set_geometry(
+        self,
+        window_id: str,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+    ) -> dict[str, Any]:
+        if self._user_desktop is not None:
+            return self._user_desktop.set_window_geometry(window_id, x, y, width, height)
+        return self._private_manager().set_window_geometry(
+            self._private_session_id(), window_id, x, y, width, height
+        )
+
+    def pointer_position(self) -> dict[str, Any]:
+        if self._user_desktop is not None:
+            position = self._user_desktop.pointer_position()
+        else:
+            position = self._private_manager().pointer_position(self._private_session_id())
+        displays = self.display_list()["displays"]
+        position["display_name"] = _display_for_point(position, displays)
+        return position
+
+    def observe(
+        self,
+        *,
+        screenshot_output: Path | None = None,
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        """Collect one target-scoped desktop snapshot for an inspect/act/verify loop."""
+        windows_result = self.window_list()
+        displays_result = self.display_list()
+        windows = windows_result["windows"]
+        displays = displays_result["displays"]
+        screenshot: dict[str, Any] | None = None
+        mapping: dict[str, Any] | None = None
+        if screenshot_output is not None:
+            screenshot = self.screenshot(screenshot_output, overwrite=overwrite)
+            mapping = _screenshot_mapping(screenshot, displays)
+
+        try:
+            pointer: dict[str, Any] = {"available": True} | self.pointer_position()
+        except InteractionError as exc:
+            pointer = {
+                "available": False,
+                "error": {"code": exc.code, "message": exc.message},
+            }
+
+        active_window = next((window for window in windows if window.get("active") is True), None)
+        return {
+            "target": self._target(),
+            "snapshot_id": f"snapshot-{uuid4().hex}",
+            "observed_at": datetime.now(UTC).isoformat(),
+            "interaction_context": {
+                "keyboard_focus_window_id": (
+                    None if active_window is None else active_window.get("window_id")
+                ),
+                "focus_semantics": "KWin active window; focused child control is not exposed",
+                "pointer": pointer,
+            },
+            "window_count": len(windows),
+            "windows": windows,
+            "display_count": len(displays),
+            "displays": displays,
+            "screenshot": screenshot,
+            "screenshot_mapping": mapping,
+            "limitations": [
+                "Accessibility elements and focused child controls are not currently exposed.",
+                "A screenshot-to-desktop transform is only returned for a single display.",
+            ],
+        }
 
     def window_wait(
         self,
@@ -226,6 +305,9 @@ class DesktopOperations:
         *,
         button: str = "left",
         steps: int = 8,
+        duration_ms: int = DEFAULT_DRAG_DURATION_MS,
+        hold_ms: int = DEFAULT_DRAG_HOLD_MS,
+        end_pause_ms: int = DEFAULT_DRAG_END_PAUSE_MS,
     ) -> dict[str, Any]:
         if self._user_desktop is not None:
             return self._user_desktop.drag_at(
@@ -235,6 +317,9 @@ class DesktopOperations:
                 end_y,
                 button=button,
                 steps=steps,
+                duration_ms=duration_ms,
+                hold_ms=hold_ms,
+                end_pause_ms=end_pause_ms,
             )
         return self._private_manager().drag(
             self._private_session_id(),
@@ -244,6 +329,9 @@ class DesktopOperations:
             end_y,
             button=button,
             steps=steps,
+            duration_ms=duration_ms,
+            hold_ms=hold_ms,
+            end_pause_ms=end_pause_ms,
         )
 
     def display_list(self) -> dict[str, Any]:
@@ -454,6 +542,72 @@ def _is_finite_number(value: Any) -> bool:
         return isfinite(float(value))
     except (OverflowError, ValueError):
         return False
+
+
+def _display_for_point(
+    point: dict[str, Any],
+    displays: list[dict[str, Any]],
+) -> str | None:
+    x, y = point.get("x"), point.get("y")
+    if not (_is_finite_number(x) and _is_finite_number(y)):
+        return None
+    for display in displays:
+        values = [display.get(field) for field in ("x", "y", "width", "height")]
+        if not all(_is_finite_number(value) for value in values):
+            continue
+        display_x, display_y, width, height = (float(cast(int | float, value)) for value in values)
+        if (
+            display_x <= float(cast(int | float, x)) < display_x + width
+            and display_y <= float(cast(int | float, y)) < display_y + height
+        ):
+            name = display.get("name")
+            return name if isinstance(name, str) else None
+    return None
+
+
+def _screenshot_mapping(
+    screenshot: dict[str, Any],
+    displays: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if len(displays) != 1:
+        return {
+            "status": "unavailable_for_composite_capture",
+            "reason": "The screenshot is a composite of multiple displays.",
+        }
+    display = displays[0]
+    width, height = screenshot.get("width"), screenshot.get("height")
+    logical_width, logical_height = display.get("width"), display.get("height")
+    if not all(
+        _is_finite_number(value) for value in (width, height, logical_width, logical_height)
+    ):
+        return {
+            "status": "unavailable",
+            "reason": "Screenshot or display dimensions are missing.",
+        }
+    pixel_width, pixel_height = float(cast(int | float, width)), float(cast(int | float, height))
+    desktop_width = float(cast(int | float, logical_width))
+    desktop_height = float(cast(int | float, logical_height))
+    if min(pixel_width, pixel_height, desktop_width, desktop_height) <= 0:
+        return {
+            "status": "unavailable",
+            "reason": "Screenshot or display dimensions are invalid.",
+        }
+    return {
+        "status": "single_display_ratio",
+        "display_name": display.get("name"),
+        "screenshot_space": "screenshot-pixels",
+        "desktop_space": "logical-desktop-pixels",
+        "screenshot_origin": {"x": 0, "y": 0},
+        "desktop_origin": {"x": display.get("x"), "y": display.get("y")},
+        "logical_pixels_per_screenshot_pixel": {
+            "x": desktop_width / pixel_width,
+            "y": desktop_height / pixel_height,
+        },
+        "formula": (
+            "desktop_x = desktop_origin_x + screenshot_x * x_ratio; "
+            "desktop_y = desktop_origin_y + screenshot_y * y_ratio"
+        ),
+    }
 
 
 def _media_capabilities() -> dict[str, bool]:

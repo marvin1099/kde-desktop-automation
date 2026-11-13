@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from kde_desktop_automation.backends import user_desktop
+from kde_desktop_automation.backends import kwin_controls, user_desktop
 from kde_desktop_automation.backends.kwin_input import InputReceipt
 from kde_desktop_automation.errors import InteractionError
 from kde_desktop_automation.process import CommandResult
@@ -55,6 +55,7 @@ def _desktop_environment(tmp_path: Path) -> dict[str, str]:
         "XDG_RUNTIME_DIR": str(runtime),
         "WAYLAND_DISPLAY": "wayland-test",
         "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus",
+        "KDE_SESSION_VERSION": "6",
         "PATH": "/usr/bin",
     }
 
@@ -95,11 +96,29 @@ def _backend(
             else:
                 raise AssertionError(f"unexpected window state command: {command}")
             output = ""
+        elif command[1] == "getmouselocation":
+            output = f"x:25 y:40 screen:0 window:{{{WINDOW_ID}}}"
+        elif command[1] == "getwindowgeometry":
+            record = available_records[command[2].strip("{}").lower()]
+            output = (
+                f"Window {{{command[2].strip('{}')}}}\n"
+                f"  Position: {record['x']},{record['y']}\n"
+                f"  Geometry: {record['width']}x{record['height']}\n"
+            )
+        elif command[1] == "windowsize":
+            record = available_records[command[2].strip("{}").lower()]
+            record["width"], record["height"] = float(command[3]), float(command[4])
+            output = ""
+        elif command[1] == "windowmove":
+            record = available_records[command[2].strip("{}").lower()]
+            record["x"], record["y"] = float(command[3]), float(command[4])
+            output = ""
         else:
             raise AssertionError(f"unexpected kdotool command: {command}")
         return CommandResult(command, 0, output, "")
 
     monkeypatch.setattr(user_desktop, "run_command", run)
+    monkeypatch.setattr(kwin_controls, "run_command", run)
     backend = user_desktop.UserDesktopBackend(
         environment,
         window_info_reader=lambda ids: {
@@ -439,7 +458,7 @@ def test_global_drag_validates_every_sampled_point_and_submits_bounded_path(
             }
         ],
     )
-    drags: list[tuple[int, int, int, int, str, int]] = []
+    drags: list[tuple[int, int, int, int, str, int, int, int, int]] = []
 
     class FakeInput:
         def __init__(self, *_args, **_kwargs):
@@ -451,19 +470,36 @@ def test_global_drag_validates_every_sampled_point_and_submits_bounded_path(
         def __exit__(self, *_exc):
             pass
 
-        def drag(self, start_x, start_y, end_x, end_y, *, button, steps):
-            drags.append((start_x, start_y, end_x, end_y, button, steps))
+        def drag(
+            self,
+            start_x,
+            start_y,
+            end_x,
+            end_y,
+            *,
+            button,
+            steps,
+            duration_ms,
+            hold_ms,
+            end_pause_ms,
+        ):
+            drags.append(
+                (start_x, start_y, end_x, end_y, button, steps, duration_ms, hold_ms, end_pause_ms)
+            )
             return InputReceipt("drag left from (10, 20) to (50, 40)", steps + 3, True)
 
     monkeypatch.setattr(user_desktop, "KWinFakeInput", FakeInput)
 
     result = backend.drag_at(10, 20, 50, 40, steps=2)
 
-    assert drags == [(10, 20, 50, 40, "left", 2)]
+    assert drags == [(10, 20, 50, 40, "left", 2, 750, 100, 250)]
     assert result["requested_path"] == {
         "start": {"x": 10, "y": 20},
         "end": {"x": 50, "y": 40},
         "steps": 2,
+        "duration_ms": 750,
+        "hold_ms": 100,
+        "end_pause_ms": 250,
         "space": "logical-desktop-pixels",
     }
     assert result["effect_verified"] is False
@@ -522,6 +558,49 @@ def test_window_minimize_is_explicit_and_verified_by_readback(
     assert result["verified"] is True
 
 
+def test_window_geometry_uses_kdotool_and_verifies_frame_readback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, commands = _backend(tmp_path, monkeypatch)
+
+    result = backend.set_window_geometry(WINDOW_ID, 20, 30, 800, 600)
+
+    assert result["verified"] is True
+    assert result["changed"] is True
+    assert result["requested_geometry"] == {
+        "x": 20,
+        "y": 30,
+        "width": 800,
+        "height": 600,
+        "coordinate_space": "logical-desktop-pixels",
+        "basis": "kwin-frame",
+    }
+    assert [command[1] for command in commands if command[1] in {"windowsize", "windowmove"}] == [
+        "windowsize",
+        "windowmove",
+    ]
+    assert result["window"]["geometry"]["x"] == 20
+
+
+def test_pointer_position_is_a_read_only_kdotool_query(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, commands = _backend(tmp_path, monkeypatch)
+
+    result = backend.pointer_position()
+
+    assert result == {
+        "x": 25,
+        "y": 40,
+        "screen_index": 0,
+        "window_id": WINDOW_ID,
+        "coordinate_space": "logical-desktop-pixels",
+    }
+    assert commands == [("/usr/bin/kdotool", "getmouselocation")]
+
+
 def test_live_capabilities_probe_window_service_and_report_focus_routing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -540,6 +619,9 @@ def test_live_capabilities_probe_window_service_and_report_focus_routing(
     assert result["capabilities"]["input.global_click"] is True
     assert result["capabilities"]["input.global_drag"] is True
     assert result["capabilities"]["window.set_minimized"] is True
+    assert result["capabilities"]["window.set_geometry"] is True
+    assert result["capabilities"]["input.pointer_position"] is True
+    assert result["capabilities"]["desktop.observe"] is True
     assert result["capabilities"]["media.players"] is True
     assert result["capabilities"]["media.control"] is True
     assert result["capabilities"]["media.seek_to"] is True

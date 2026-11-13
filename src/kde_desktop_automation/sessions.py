@@ -15,7 +15,14 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from kde_desktop_automation.backends.displays import DisplayInfo
-from kde_desktop_automation.backends.kwin_input import InputReceipt, validate_drag_steps
+from kde_desktop_automation.backends.kwin_input import (
+    DEFAULT_DRAG_DURATION_MS,
+    DEFAULT_DRAG_END_PAUSE_MS,
+    DEFAULT_DRAG_HOLD_MS,
+    InputReceipt,
+    validate_drag_steps,
+    validate_drag_timing,
+)
 from kde_desktop_automation.backends.kwin_virtual import KWinVirtualBackend
 from kde_desktop_automation.errors import InteractionError
 from kde_desktop_automation.models import ProcessIdentity, SessionRecord
@@ -70,6 +77,9 @@ class SessionBackend(Protocol):
         end_y: int,
         button: str,
         steps: int,
+        duration_ms: int,
+        hold_ms: int,
+        end_pause_ms: int,
     ) -> InputReceipt: ...
 
     def list_windows(self, session: SessionRecord) -> list[dict[str, Any]]: ...
@@ -84,6 +94,18 @@ class SessionBackend(Protocol):
         window_id: str,
         minimized: bool,
     ) -> dict[str, Any]: ...
+
+    def set_window_geometry(
+        self,
+        session: SessionRecord,
+        window_id: str,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+    ) -> dict[str, Any]: ...
+
+    def pointer_position(self, session: SessionRecord) -> dict[str, Any]: ...
 
     def send_key_to_window(
         self, session: SessionRecord, window_id: str, chord: str
@@ -456,8 +478,12 @@ class SessionManager:
         *,
         button: str = "left",
         steps: int = 8,
+        duration_ms: int = DEFAULT_DRAG_DURATION_MS,
+        hold_ms: int = DEFAULT_DRAG_HOLD_MS,
+        end_pause_ms: int = DEFAULT_DRAG_END_PAUSE_MS,
     ) -> dict[str, Any]:
         validate_drag_steps(steps)
+        validate_drag_timing(duration_ms, hold_ms, end_pause_ms)
         record = self._require_running(session_id)
         for x, y in ((start_x, start_y), (end_x, end_y)):
             if (
@@ -490,12 +516,18 @@ class SessionManager:
             end_y,
             button,
             steps,
+            duration_ms,
+            hold_ms,
+            end_pause_ms,
         )
         result = receipt.to_dict(session_id=session_id, wayland_display=record.wayland_display)
         result["requested_path"] = {
             "start": {"x": start_x, "y": start_y},
             "end": {"x": end_x, "y": end_y},
             "steps": steps,
+            "duration_ms": duration_ms,
+            "hold_ms": hold_ms,
+            "end_pause_ms": end_pause_ms,
             "space": "logical-desktop-pixels",
         }
         return _global_pointer_semantics(result)
@@ -579,6 +611,38 @@ class SessionManager:
             "verified": True,
             "window": window,
             "note": "Minimized state is scoped to this private KWin session.",
+        }
+
+    def set_window_geometry(
+        self,
+        session_id: str,
+        window_id: str,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+    ) -> dict[str, Any]:
+        record = self._require_window_management(session_id)
+        result = self.backend.set_window_geometry(record, window_id, x, y, width, height)
+        if result.get("verified") is not True:
+            raise InteractionError(
+                "window_geometry_unverified",
+                "The private KWin backend did not verify the requested frame geometry.",
+                details={
+                    "session_id": session_id,
+                    "window_id": window_id,
+                    "result": result,
+                },
+            )
+        return result | {
+            "target": {"kind": "agent-session", "session_id": session_id, "window_id": window_id},
+            "action": "set-geometry",
+        }
+
+    def pointer_position(self, session_id: str) -> dict[str, Any]:
+        record = self._require_running(session_id)
+        return self.backend.pointer_position(record) | {
+            "target": {"kind": "agent-session", "session_id": session_id}
         }
 
     def send_key_to_window(

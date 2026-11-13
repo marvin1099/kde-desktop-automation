@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from kde_desktop_automation import models
 from kde_desktop_automation.backends.displays import DisplayInfo
 from kde_desktop_automation.backends.kwin_input import InputReceipt
 from kde_desktop_automation.errors import InteractionError
@@ -24,8 +25,9 @@ class FakeBackend:
         self.running: set[str] = set()
         self.launch_calls: list[tuple[str, ...]] = []
         self.launch_delay = 0.0
-        self.drag_calls: list[tuple[int, int, int, int, str, int]] = []
+        self.drag_calls: list[tuple[int, int, int, int, str, int, int, int, int]] = []
         self.minimized_calls: list[tuple[str, bool]] = []
+        self.geometry_calls: list[tuple[str, int, int, int, int]] = []
 
     def start(self, session_id: str, name: str, width: int, height: int) -> SessionRecord:
         self.running.add(session_id)
@@ -111,8 +113,13 @@ class FakeBackend:
         end_y: int,
         button: str,
         steps: int,
+        duration_ms: int,
+        hold_ms: int,
+        end_pause_ms: int,
     ) -> InputReceipt:
-        self.drag_calls.append((start_x, start_y, end_x, end_y, button, steps))
+        self.drag_calls.append(
+            (start_x, start_y, end_x, end_y, button, steps, duration_ms, hold_ms, end_pause_ms)
+        )
         return InputReceipt("drag left from (10, 20) to (50, 40)", steps + 3, True)
 
     def set_window_minimized(
@@ -123,6 +130,25 @@ class FakeBackend:
     ) -> dict[str, object]:
         self.minimized_calls.append((window_id, minimized))
         return {"window_id": window_id, "minimized": minimized, "active": False}
+
+    def set_window_geometry(
+        self,
+        _session: SessionRecord,
+        window_id: str,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+    ) -> dict[str, object]:
+        self.geometry_calls.append((window_id, x, y, width, height))
+        return {
+            "window_id": window_id,
+            "verified": True,
+            "effective_geometry": {"x": x, "y": y, "width": width, "height": height},
+        }
+
+    def pointer_position(self, _session: SessionRecord) -> dict[str, object]:
+        return {"x": 3, "y": 4, "coordinate_space": "logical-desktop-pixels"}
 
 
 @pytest.fixture
@@ -156,6 +182,23 @@ def test_session_lifecycle_is_scoped_to_agent_session(manager: SessionManager) -
     assert not warnings
     assert stopped["status"] == "stopped"
     assert manager.list_sessions()[0]["status"] == "stopped"
+
+
+def test_private_capabilities_report_screenshot_executable_availability(
+    manager: SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = manager.create_agent_session("screenshot-capability", 640, 480)
+    monkeypatch.setattr(
+        models.shutil,
+        "which",
+        lambda executable: "/usr/bin/spectacle" if executable == "spectacle" else None,
+    )
+
+    assert manager.get_session(session.session_id)["capabilities"]["screenshot.capture"] is True
+
+    monkeypatch.setattr(models.shutil, "which", lambda _executable: None)
+    assert manager.get_session(session.session_id)["capabilities"]["screenshot.capture"] is False
 
 
 def test_runtime_environment_is_for_one_running_private_session(manager: SessionManager) -> None:
@@ -277,9 +320,12 @@ def test_global_drag_is_bounded_to_the_private_virtual_output(manager: SessionMa
         "start": {"x": 10, "y": 20},
         "end": {"x": 50, "y": 40},
         "steps": 4,
+        "duration_ms": 750,
+        "hold_ms": 100,
+        "end_pause_ms": 250,
         "space": "logical-desktop-pixels",
     }
-    assert manager.backend.drag_calls == [(10, 20, 50, 40, "left", 4)]
+    assert manager.backend.drag_calls == [(10, 20, 50, 40, "left", 4, 750, 100, 250)]
 
     with pytest.raises(InteractionError) as error:
         manager.drag(session.session_id, 10, 20, 640, 40, steps=4)
@@ -327,6 +373,23 @@ def test_private_window_minimized_state_is_explicit_and_verified(manager: Sessio
     assert result["minimized"] is True
     assert result["verified"] is True
     assert manager.backend.minimized_calls == [("window-uuid", True)]
+
+
+def test_private_window_geometry_and_pointer_position_are_target_scoped(
+    manager: SessionManager,
+) -> None:
+    session = manager.create_agent_session("window-geometry", 640, 480)
+    manager.store.save(replace(session, window_management_version=13))
+
+    geometry = manager.set_window_geometry(session.session_id, "window-uuid", 10, 20, 400, 300)
+    pointer = manager.pointer_position(session.session_id)
+
+    assert geometry["action"] == "set-geometry"
+    assert geometry["verified"] is True
+    assert geometry["target"]["session_id"] == session.session_id
+    assert manager.backend.geometry_calls == [("window-uuid", 10, 20, 400, 300)]
+    assert pointer["target"]["session_id"] == session.session_id
+    assert pointer["x"] == 3
 
 
 @pytest.mark.parametrize(

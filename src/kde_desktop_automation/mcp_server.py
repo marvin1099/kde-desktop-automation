@@ -12,7 +12,14 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, ImageContent, TextContent, ToolAnnotations
 from pydantic import Field
 
-from kde_desktop_automation.backends.kwin_input import MAX_DRAG_STEPS
+from kde_desktop_automation.backends.kwin_input import (
+    DEFAULT_DRAG_DURATION_MS,
+    DEFAULT_DRAG_END_PAUSE_MS,
+    DEFAULT_DRAG_HOLD_MS,
+    MAX_DRAG_DURATION_MS,
+    MAX_DRAG_PAUSE_MS,
+    MAX_DRAG_STEPS,
+)
 from kde_desktop_automation.errors import InteractionError
 from kde_desktop_automation.operations import DesktopOperations
 from kde_desktop_automation.paths import RuntimePaths
@@ -41,6 +48,12 @@ focus. KWin may ignore fake-input events, so a successful tool call is not proof
 that an application received the action; verify with a screenshot or independent
 application state. Drag paths are bounded to 64 steps and must stay within the
 selected desktop's output geometry.
+
+`kde_desktop_observe` returns a fresh window/display/pointer snapshot and the
+screenshot image. Screenshot-pixel mapping is explicit when a single display is
+captured; composite multi-display mapping is reported as unavailable rather than
+guessed. `kde_window_set_geometry` is the precise KWin frame-placement path, while
+`kde_input_drag` remains a real global pointer gesture for UI interactions.
 
 Session IDs select a target; they are not per-client authorization tokens. MCP
 clients sharing this server share the Unix user's authority over managed private
@@ -86,6 +99,7 @@ PrivateSessionId = Annotated[
 WindowId = Annotated[str, Field(min_length=1, max_length=64)]
 Selector = Annotated[str, Field(min_length=1, max_length=512)]
 LogicalCoordinate = Annotated[int, Field(strict=True)]
+WindowFrameCoordinate = Annotated[int, Field(strict=True, ge=-32_768, le=32_768)]
 MediaAction = Literal["play", "pause", "play-pause", "stop", "next", "previous", "seek"]
 AudioDirection = Literal["sink", "source"]
 LiveDesktopTarget = Literal["user-desktop"]
@@ -332,6 +346,38 @@ def create_mcp_server(
         )
 
     @server.tool(
+        name="kde_window_set_geometry",
+        description=(
+            "Set an explicit KWin frame rectangle in logical desktop pixels and verify its "
+            "effective geometry. This is window placement, not a simulated mouse drag."
+        ),
+        annotations=ToolAnnotations(
+            destructiveHint=True,
+            idempotentHint=True,
+            openWorldHint=True,
+        ),
+        structured_output=False,
+    )
+    def window_set_geometry(
+        session: TargetSession,
+        window_id: WindowId,
+        x: WindowFrameCoordinate,
+        y: WindowFrameCoordinate,
+        width: Annotated[int, Field(strict=True, ge=1, le=32_768)],
+        height: Annotated[int, Field(strict=True, ge=1, le=32_768)],
+    ) -> CallToolResult:
+        """Set and verify one window's KWin frame x/y/width/height."""
+        return _invoke(
+            lambda: desktop_operations(session).window_set_geometry(
+                window_id,
+                x,
+                y,
+                width,
+                height,
+            )
+        )
+
+    @server.tool(
         name="kde_input_key",
         description="Send a key chord to an already-active target window; no implicit activation.",
         annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True),
@@ -409,6 +455,8 @@ def create_mcp_server(
         description=(
             "Drag between global logical-desktop pixel coordinates. Every interpolated point "
             f"must lie on a listed display; steps are limited to 1–{MAX_DRAG_STEPS}. "
+            "Duration and start/end pauses are bounded to make real UI drag-and-drop gestures "
+            "deliverable without changing their global-coordinate semantics. "
             "This can move the pointer or change the active window and is not bound to a "
             "particular window."
         ),
@@ -423,6 +471,15 @@ def create_mcp_server(
         end_y: LogicalCoordinate,
         button: Literal["left", "middle", "right"] = "left",
         steps: Annotated[int, Field(strict=True, ge=1, le=MAX_DRAG_STEPS)] = 8,
+        duration_ms: Annotated[
+            int, Field(strict=True, ge=0, le=MAX_DRAG_DURATION_MS)
+        ] = DEFAULT_DRAG_DURATION_MS,
+        hold_ms: Annotated[int, Field(strict=True, ge=0, le=MAX_DRAG_PAUSE_MS)] = (
+            DEFAULT_DRAG_HOLD_MS
+        ),
+        end_pause_ms: Annotated[
+            int, Field(strict=True, ge=0, le=MAX_DRAG_PAUSE_MS)
+        ] = DEFAULT_DRAG_END_PAUSE_MS,
     ) -> CallToolResult:
         """Submit a bounded global pointer drag in logical desktop coordinates."""
         return _invoke(
@@ -433,8 +490,21 @@ def create_mcp_server(
                 end_y,
                 button=button,
                 steps=steps,
+                duration_ms=duration_ms,
+                hold_ms=hold_ms,
+                end_pause_ms=end_pause_ms,
             )
         )
+
+    @server.tool(
+        name="kde_pointer_position",
+        description="Read the selected session's current pointer position without moving it.",
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+        structured_output=False,
+    )
+    def pointer_position(session: TargetSession) -> CallToolResult:
+        """Return the current pointer coordinates and display in logical desktop pixels."""
+        return _invoke(lambda: desktop_operations(session).pointer_position())
 
     @server.tool(
         name="kde_display_list",
@@ -614,6 +684,57 @@ def create_mcp_server(
     def capabilities(session: TargetSession) -> CallToolResult:
         """Return target-scoped capability flags and backend limitations."""
         return _invoke(lambda: desktop_operations(session).capabilities())
+
+    @server.tool(
+        name="kde_desktop_observe",
+        description=(
+            "Return a fresh desktop snapshot with windows, logical display geometry, pointer/focus "
+            "context, and screenshot metadata/image content when Spectacle is available."
+        ),
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+        structured_output=False,
+    )
+    def desktop_observe(session: TargetSession) -> CallToolResult:
+        """Deliver one visual and structured observation for an iterative agent loop."""
+        try:
+            operations = desktop_operations(session)
+            capabilities = operations.capabilities().get("capabilities", {})
+            if (
+                not isinstance(capabilities, dict)
+                or capabilities.get("screenshot.capture") is not True
+            ):
+                data = operations.observe()
+                data["observation_note"] = (
+                    "Screenshot is unavailable on this target; returned structured state only."
+                )
+                return _success(data)
+            with tempfile.TemporaryDirectory(prefix="kde-desktop-observe-") as temporary_dir:
+                screenshot_path = Path(temporary_dir) / "screenshot.png"
+                data = operations.observe(screenshot_output=screenshot_path)
+                image_bytes = screenshot_path.read_bytes()
+            data["screenshot"] = data["screenshot"] | {"path": None, "image_embedded": True}
+            envelope = {"schema_version": "1", "ok": True, "data": data}
+            return CallToolResult(
+                content=[
+                    TextContent(type="text", text=json.dumps(envelope, ensure_ascii=False)),
+                    ImageContent(
+                        type="image",
+                        data=base64.b64encode(image_bytes).decode("ascii"),
+                        mimeType="image/png",
+                    ),
+                ],
+                structuredContent=envelope,
+            )
+        except InteractionError as exc:
+            return _failure(exc)
+        except OSError as exc:
+            return _failure(
+                InteractionError(
+                    "screenshot_read_failed",
+                    "The observation was captured but its PNG could not be read for MCP delivery.",
+                    details={"reason": str(exc)},
+                )
+            )
 
     @server.tool(
         name="kde_screenshot",

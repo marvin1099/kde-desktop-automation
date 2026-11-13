@@ -18,6 +18,7 @@ from kde_desktop_automation.mcp_server import OperationsFactory, create_mcp_serv
 class FakeOperations:
     selected_sessions: list[str | None] = []
     screenshot_png = b"\x89PNG\r\n\x1a\nmock-png"
+    screenshot_available = True
 
     def __init__(self, session: str | None) -> None:
         self.session = session
@@ -37,6 +38,42 @@ class FakeOperations:
             "minimized": minimized,
         }
 
+    def window_set_geometry(
+        self,
+        window_id: str,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+    ) -> dict[str, Any]:
+        return {
+            "target": {"kind": self.session, "window_id": window_id},
+            "requested_geometry": {"x": x, "y": y, "width": width, "height": height},
+            "verified": True,
+        }
+
+    def pointer_position(self) -> dict[str, Any]:
+        return {"target": {"kind": self.session}, "x": 12, "y": 34}
+
+    def capabilities(self) -> dict[str, Any]:
+        return {"capabilities": {"screenshot.capture": self.screenshot_available}}
+
+    def observe(self, *, screenshot_output: Path | None = None, overwrite: bool = False):
+        del overwrite
+        if screenshot_output is not None:
+            screenshot_output.write_bytes(self.screenshot_png)
+        return {
+            "target": {"kind": self.session},
+            "snapshot_id": "snapshot-test",
+            "screenshot": None
+            if screenshot_output is None
+            else {
+                "path": str(screenshot_output),
+                "width": 1,
+                "height": 1,
+            },
+        }
+
     def input_click_at(self, x: int, y: int, *, button: str = "left") -> dict[str, Any]:
         return {"target": {"kind": self.session}, "point": [x, y], "button": button}
 
@@ -49,12 +86,18 @@ class FakeOperations:
         *,
         button: str = "left",
         steps: int = 8,
+        duration_ms: int = 750,
+        hold_ms: int = 100,
+        end_pause_ms: int = 250,
     ) -> dict[str, Any]:
         return {
             "target": {"kind": self.session},
             "path": [start_x, start_y, end_x, end_y],
             "button": button,
             "steps": steps,
+            "duration_ms": duration_ms,
+            "hold_ms": hold_ms,
+            "end_pause_ms": end_pause_ms,
         }
 
     def media_players(self) -> dict[str, Any]:
@@ -154,11 +197,13 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         "kde_window_wait",
         "kde_window_activate",
         "kde_window_set_minimized",
+        "kde_window_set_geometry",
         "kde_input_key",
         "kde_input_type",
         "kde_input_click",
         "kde_input_click_at",
         "kde_input_drag",
+        "kde_pointer_position",
         "kde_display_list",
         "kde_media_list",
         "kde_media_inspect",
@@ -170,6 +215,7 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         "kde_audio_set_mute",
         "kde_audio_route_stream",
         "kde_screenshot",
+        "kde_desktop_observe",
         "kde_capabilities",
     } <= names
 
@@ -188,11 +234,13 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         "kde_window_inspect",
         "kde_window_activate",
         "kde_window_set_minimized",
+        "kde_window_set_geometry",
         "kde_input_key",
         "kde_input_type",
         "kde_input_click",
         "kde_input_click_at",
         "kde_input_drag",
+        "kde_pointer_position",
         "kde_display_list",
         "kde_media_list",
         "kde_media_inspect",
@@ -204,6 +252,7 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         "kde_audio_set_mute",
         "kde_audio_route_stream",
         "kde_screenshot",
+        "kde_desktop_observe",
         "kde_capabilities",
     }
     for tool in tools:
@@ -250,6 +299,10 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
     assert drag_tool.inputSchema["properties"]["button"]["enum"] == ["left", "middle", "right"]
     minimized_tool = next(tool for tool in tools if tool.name == "kde_window_set_minimized")
     assert minimized_tool.inputSchema["properties"]["minimized"]["type"] == "boolean"
+    geometry_tool = next(tool for tool in tools if tool.name == "kde_window_set_geometry")
+    assert geometry_tool.inputSchema["properties"]["width"]["minimum"] == 1
+    assert geometry_tool.inputSchema["properties"]["width"]["maximum"] == 32_768
+    assert "session" in geometry_tool.inputSchema.get("required", [])
     text_tool = next(tool for tool in tools if tool.name == "kde_input_type")
     assert text_tool.inputSchema["properties"]["text"]["maxLength"] == 4096
     create_tool = next(tool for tool in tools if tool.name == "kde_session_create")
@@ -356,6 +409,70 @@ def test_mcp_global_pointer_and_minimized_tools_use_explicit_target() -> None:
     assert drag.structuredContent["data"]["steps"] == 4
     assert minimized.structuredContent["data"]["minimized"] is False
     assert FakeOperations.selected_sessions == [session_id, session_id, session_id]
+
+
+def test_mcp_geometry_and_pointer_position_are_generic_explicit_tools() -> None:
+    server = _server()
+    session_id = "agent-123456789abc"
+
+    async def invoke_all() -> list[CallToolResult]:
+        results = await asyncio.gather(
+            server.call_tool(
+                "kde_window_set_geometry",
+                {
+                    "session": session_id,
+                    "window_id": "window-uuid",
+                    "x": 10,
+                    "y": 20,
+                    "width": 640,
+                    "height": 480,
+                },
+            ),
+            server.call_tool("kde_pointer_position", {"session": session_id}),
+        )
+        return [cast(CallToolResult, result) for result in results]
+
+    geometry, pointer = asyncio.run(invoke_all())
+
+    assert geometry.structuredContent["data"]["verified"] is True
+    assert geometry.structuredContent["data"]["requested_geometry"] == {
+        "x": 10,
+        "y": 20,
+        "width": 640,
+        "height": 480,
+    }
+    assert pointer.structuredContent["data"]["x"] == 12
+    assert FakeOperations.selected_sessions == [session_id, session_id]
+
+
+def test_mcp_observe_returns_structured_snapshot_and_screenshot_image() -> None:
+    server = _server()
+
+    result = asyncio.run(server.call_tool("kde_desktop_observe", {"session": "user-desktop"}))
+
+    assert isinstance(result, CallToolResult)
+    assert result.isError is False
+    assert result.structuredContent["data"]["snapshot_id"] == "snapshot-test"
+    assert result.structuredContent["data"]["screenshot"]["path"] is None
+    assert result.structuredContent["data"]["screenshot"]["image_embedded"] is True
+    image = next(item for item in result.content if isinstance(item, ImageContent))
+    assert base64.b64decode(image.data) == FakeOperations.screenshot_png
+
+
+def test_mcp_observe_returns_structured_snapshot_without_unavailable_screenshot() -> None:
+    server = _server()
+    FakeOperations.screenshot_available = False
+
+    try:
+        result = asyncio.run(server.call_tool("kde_desktop_observe", {"session": "user-desktop"}))
+    finally:
+        FakeOperations.screenshot_available = True
+
+    assert isinstance(result, CallToolResult)
+    assert result.isError is False
+    assert result.structuredContent["data"]["screenshot"] is None
+    assert "unavailable" in result.structuredContent["data"]["observation_note"]
+    assert not any(isinstance(item, ImageContent) for item in result.content)
 
 
 def test_mcp_media_seek_to_uses_explicit_session_and_absolute_position() -> None:

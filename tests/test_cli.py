@@ -109,13 +109,51 @@ def test_global_pointer_and_window_state_cli_use_explicit_selected_target(monkey
             calls.append(("click-at", self.session, x, y, button))
             return {"target": {"kind": self.session}, "x": x, "y": y}
 
-        def input_drag(self, start_x, start_y, end_x, end_y, *, button="left", steps=8):
-            calls.append(("drag", self.session, start_x, start_y, end_x, end_y, button, steps))
+        def input_drag(
+            self,
+            start_x,
+            start_y,
+            end_x,
+            end_y,
+            *,
+            button="left",
+            steps=8,
+            duration_ms=750,
+            hold_ms=100,
+            end_pause_ms=250,
+        ):
+            calls.append(
+                (
+                    "drag",
+                    self.session,
+                    start_x,
+                    start_y,
+                    end_x,
+                    end_y,
+                    button,
+                    steps,
+                    duration_ms,
+                    hold_ms,
+                    end_pause_ms,
+                )
+            )
             return {"target": {"kind": self.session}, "steps": steps}
 
         def window_set_minimized(self, window_id, minimized):
             calls.append(("minimize", self.session, window_id, minimized))
             return {"target": {"kind": self.session}, "minimized": minimized}
+
+        def window_set_geometry(self, window_id, x, y, width, height):
+            calls.append(("geometry", self.session, window_id, x, y, width, height))
+            return {"target": {"kind": self.session}, "verified": True}
+
+        def pointer_position(self):
+            calls.append(("pointer-position", self.session))
+            return {"target": {"kind": self.session}, "x": 30, "y": 40}
+
+        def observe(self, *, screenshot_output=None, overwrite=False):
+            calls.append(("observe", self.session, screenshot_output, overwrite))
+            return {"target": {"kind": self.session}, "snapshot_id": "snapshot-test"}
 
     monkeypatch.setattr("kde_desktop_automation.cli.DesktopOperations", FakeOperations)
     runner = CliRunner()
@@ -172,6 +210,29 @@ def test_global_pointer_and_window_state_cli_use_explicit_selected_target(monkey
             "--json",
         ],
     )
+    geometry = runner.invoke(
+        app,
+        [
+            "--session",
+            "user-desktop",
+            "window",
+            "set-geometry",
+            "window-uuid",
+            "10",
+            "20",
+            "640",
+            "480",
+            "--json",
+        ],
+    )
+    pointer = runner.invoke(
+        app,
+        ["--session", "agent-123456789abc", "pointer", "position", "--json"],
+    )
+    observation = runner.invoke(
+        app,
+        ["--session", "agent-123456789abc", "observe", "--json"],
+    )
 
     assert click.exit_code == 0, click.stdout + click.stderr
     assert drag.exit_code == 0, drag.stdout + drag.stderr
@@ -179,11 +240,17 @@ def test_global_pointer_and_window_state_cli_use_explicit_selected_target(monkey
     assert live_alias_minimize.exit_code == 0, (
         live_alias_minimize.stdout + live_alias_minimize.stderr
     )
+    assert geometry.exit_code == 0, geometry.stdout + geometry.stderr
+    assert pointer.exit_code == 0, pointer.stdout + pointer.stderr
+    assert observation.exit_code == 0, observation.stdout + observation.stderr
     assert calls == [
         ("click-at", "user-desktop", -1200, 300, "left"),
-        ("drag", "user-desktop", -10, 20, 40, 60, "left", 4),
+        ("drag", "user-desktop", -10, 20, 40, 60, "left", 4, 750, 100, 250),
         ("minimize", "user-desktop", "window-uuid", True),
         ("minimize", "user-desktop", "window-uuid", False),
+        ("geometry", "user-desktop", "window-uuid", 10, 20, 640, 480),
+        ("pointer-position", "agent-123456789abc"),
+        ("observe", "agent-123456789abc", None, False),
     ]
 
 

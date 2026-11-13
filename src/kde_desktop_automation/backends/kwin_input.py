@@ -5,6 +5,7 @@ import ctypes.util
 import os
 import socket
 import stat
+import time
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,11 @@ _BTN_LEFT = 0x110
 _BTN_RIGHT = 0x111
 _BTN_MIDDLE = 0x112
 MAX_DRAG_STEPS = 64
+DEFAULT_DRAG_DURATION_MS = 750
+DEFAULT_DRAG_HOLD_MS = 100
+DEFAULT_DRAG_END_PAUSE_MS = 250
+MAX_DRAG_DURATION_MS = 5_000
+MAX_DRAG_PAUSE_MS = 2_000
 
 # Request order and signatures from KDE's fake-input protocol. This protocol is
 # deliberately treated as best-effort: KWin exposes no authorization or event
@@ -133,6 +139,32 @@ def validate_drag_steps(steps: int) -> None:
             "invalid_drag_steps",
             f"Drag steps must be an integer from 1 through {MAX_DRAG_STEPS}.",
             details={"steps": steps, "maximum": MAX_DRAG_STEPS},
+        )
+
+
+def validate_drag_timing(duration_ms: int, hold_ms: int, end_pause_ms: int) -> None:
+    values = {
+        "duration_ms": (duration_ms, 0, MAX_DRAG_DURATION_MS),
+        "hold_ms": (hold_ms, 0, MAX_DRAG_PAUSE_MS),
+        "end_pause_ms": (end_pause_ms, 0, MAX_DRAG_PAUSE_MS),
+    }
+    for name, (value, minimum, maximum) in values.items():
+        if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+            raise InteractionError(
+                "invalid_drag_timing",
+                f"Drag {name} must be an integer from {minimum} through {maximum} milliseconds.",
+                details={name: value, "minimum": minimum, "maximum": maximum},
+            )
+    if duration_ms + hold_ms + end_pause_ms > 8_000:
+        raise InteractionError(
+            "invalid_drag_timing",
+            "A drag's total requested duration must not exceed 8000 milliseconds.",
+            details={
+                "duration_ms": duration_ms,
+                "hold_ms": hold_ms,
+                "end_pause_ms": end_pause_ms,
+                "maximum_total_ms": 8_000,
+            },
         )
 
 
@@ -425,10 +457,14 @@ class KWinFakeInput:
         *,
         button: str = "left",
         steps: int = 8,
+        duration_ms: int = DEFAULT_DRAG_DURATION_MS,
+        hold_ms: int = DEFAULT_DRAG_HOLD_MS,
+        end_pause_ms: int = DEFAULT_DRAG_END_PAUSE_MS,
     ) -> InputReceipt:
         self._require_fake_input(minimum_version=3, operation="pointer input")
         button_name, button_code = self._button(button)
         validate_drag_steps(steps)
+        validate_drag_timing(duration_ms, hold_ms, end_pause_ms)
 
         self._request(
             9,
@@ -442,10 +478,16 @@ class KWinFakeInput:
                 ctypes.c_uint32(button_code),
                 ctypes.c_uint32(_KEY_STATE_PRESSED),
             )
+            if hold_ms:
+                time.sleep(hold_ms / 1000)
             for index in range(1, steps + 1):
                 x = round(start_x + (end_x - start_x) * index / steps)
                 y = round(start_y + (end_y - start_y) * index / steps)
+                if duration_ms:
+                    time.sleep(duration_ms / steps / 1000)
                 self._request(9, ctypes.c_int32(_fixed(x)), ctypes.c_int32(_fixed(y)))
+            if end_pause_ms:
+                time.sleep(end_pause_ms / 1000)
         except BaseException:
             if release_needed:
                 with suppress(Exception):

@@ -46,13 +46,42 @@ class FakeManager:
         *,
         button: str = "left",
         steps: int = 8,
+        duration_ms: int = 750,
+        hold_ms: int = 100,
+        end_pause_ms: int = 250,
     ):
-        self.calls.append(("drag", session_id, start_x, start_y, end_x, end_y, button, steps))
+        self.calls.append(
+            (
+                "drag",
+                session_id,
+                start_x,
+                start_y,
+                end_x,
+                end_y,
+                button,
+                steps,
+                duration_ms,
+                hold_ms,
+                end_pause_ms,
+            )
+        )
         return {"target": {"kind": "agent-session", "session_id": session_id}}
 
     def set_window_minimized(self, session_id: str, window_id: str, minimized: bool):
         self.calls.append(("set_window_minimized", session_id, window_id, minimized))
         return {"target": {"kind": "agent-session", "session_id": session_id}}
+
+    def set_window_geometry(self, session_id, window_id, x, y, width, height):
+        self.calls.append(("set_window_geometry", session_id, window_id, x, y, width, height))
+        return {"target": {"kind": "agent-session", "session_id": session_id}}
+
+    def pointer_position(self, session_id):
+        self.calls.append(("pointer_position", session_id))
+        return {"x": 10, "y": 20}
+
+    def displays(self, _session_id):
+        self.calls.append(("displays", _session_id))
+        return [{"name": "Virtual-0", "x": 0, "y": 0, "width": 1280, "height": 800}]
 
     def get_session(self, _session_id: str) -> dict[str, Any]:
         return self.capability_record
@@ -79,13 +108,41 @@ class FakeUserDesktop:
         *,
         button: str = "left",
         steps: int = 8,
+        duration_ms: int = 750,
+        hold_ms: int = 100,
+        end_pause_ms: int = 250,
     ) -> dict[str, Any]:
-        self.calls.append(("drag_at", start_x, start_y, end_x, end_y, button, steps))
+        self.calls.append(
+            (
+                "drag_at",
+                start_x,
+                start_y,
+                end_x,
+                end_y,
+                button,
+                steps,
+                duration_ms,
+                hold_ms,
+                end_pause_ms,
+            )
+        )
         return {"target": {"kind": "user-desktop"}}
 
     def set_window_minimized(self, window_id: str, minimized: bool) -> dict[str, Any]:
         self.calls.append(("set_window_minimized", window_id, minimized))
         return {"target": {"kind": "user-desktop", "window_id": window_id}}
+
+    def set_window_geometry(self, window_id, x, y, width, height):
+        self.calls.append(("set_window_geometry", window_id, x, y, width, height))
+        return {"target": {"kind": "user-desktop", "window_id": window_id}}
+
+    def pointer_position(self):
+        self.calls.append(("pointer_position",))
+        return {"x": 15, "y": 25}
+
+    def list_displays(self):
+        self.calls.append(("list_displays",))
+        return [{"name": "DP-1", "x": 0, "y": 0, "width": 1920, "height": 1080}]
 
 
 def test_private_default_target_is_resolved_without_live_desktop_fallback(monkeypatch) -> None:
@@ -147,9 +204,42 @@ def test_global_pointer_and_minimize_operations_use_the_explicit_live_target() -
 
     assert live_desktop.calls == [
         ("click_at", -400, 250, "left"),
-        ("drag_at", 10, 20, 30, 40, "left", 4),
+        ("drag_at", 10, 20, 30, 40, "left", 4, 750, 100, 250),
         ("set_window_minimized", "window-uuid", True),
     ]
+
+
+def test_geometry_and_pointer_queries_route_to_the_explicit_live_target() -> None:
+    live_desktop = FakeUserDesktop()
+    operations = DesktopOperations("user-desktop", user_desktop=live_desktop)  # type: ignore[arg-type]
+
+    operations.window_set_geometry("window-uuid", 0, 10, 800, 600)
+    pointer = operations.pointer_position()
+
+    assert pointer["display_name"] == "DP-1"
+    assert live_desktop.calls == [
+        ("set_window_geometry", "window-uuid", 0, 10, 800, 600),
+        ("pointer_position",),
+        ("list_displays",),
+    ]
+
+
+def test_observe_returns_structured_context_and_reports_pointer_display() -> None:
+    live_desktop = FakeUserDesktop()
+    operations = DesktopOperations("user-desktop", user_desktop=live_desktop)  # type: ignore[arg-type]
+
+    result = operations.observe()
+
+    assert result["target"] == {"kind": "user-desktop"}
+    assert result["snapshot_id"].startswith("snapshot-")
+    assert result["interaction_context"]["keyboard_focus_window_id"] is None
+    assert result["interaction_context"]["pointer"] == {
+        "available": True,
+        "x": 15,
+        "y": 25,
+        "display_name": "DP-1",
+    }
+    assert result["screenshot"] is None
 
 
 def test_global_pointer_operations_route_to_selected_private_session() -> None:
@@ -162,8 +252,23 @@ def test_global_pointer_operations_route_to_selected_private_session() -> None:
 
     assert manager.calls == [
         ("click", "agent-222222222222", 10, 20, "left"),
-        ("drag", "agent-222222222222", 10, 20, 30, 40, "left", 4),
+        ("drag", "agent-222222222222", 10, 20, 30, 40, "left", 4, 750, 100, 250),
         ("set_window_minimized", "agent-222222222222", "window-uuid", False),
+    ]
+
+
+def test_geometry_and_pointer_queries_route_to_the_selected_private_session() -> None:
+    manager = FakeManager()
+    operations = DesktopOperations("agent-222222222222", manager=manager)  # type: ignore[arg-type]
+
+    operations.window_set_geometry("window-uuid", 10, 20, 640, 480)
+    pointer = operations.pointer_position()
+
+    assert pointer["display_name"] == "Virtual-0"
+    assert manager.calls == [
+        ("set_window_geometry", "agent-222222222222", "window-uuid", 10, 20, 640, 480),
+        ("pointer_position", "agent-222222222222"),
+        ("displays", "agent-222222222222"),
     ]
 
 

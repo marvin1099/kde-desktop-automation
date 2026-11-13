@@ -122,6 +122,135 @@ def test_private_kwin_output_and_screenshot_round_trip(tmp_path, monkeypatch) ->
             assert not Path(session.runtime_dir).exists()
 
 
+@pytest.mark.skipif(
+    os.environ.get("KDE_DESKTOP_RUN_KWIN_DND_INTEGRATION") != "1",
+    reason=(
+        "set KDE_DESKTOP_RUN_KWIN_DND_INTEGRATION=1 to test private Dolphin-to-Kate drag-and-drop"
+    ),
+)
+def test_private_dolphin_drag_and_drop_opens_file_in_kate(tmp_path) -> None:
+    required_executables = ("dolphin", "kate", "kdotool", "wl-paste")
+    missing = [name for name in required_executables if shutil.which(name) is None]
+    if missing:
+        pytest.skip(f"Dolphin-to-Kate integration test requires: {', '.join(missing)}")
+    host_runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not host_runtime:
+        pytest.skip("an XDG_RUNTIME_DIR is required")
+
+    paths = RuntimePaths.from_environment(
+        {
+            "XDG_RUNTIME_DIR": host_runtime,
+            "XDG_STATE_HOME": str(tmp_path / "state"),
+        }
+    )
+    backend = KWinVirtualBackend(paths)
+    manager = SessionManager(paths, backend)
+    session = manager.create_agent_session("private-dolphin-kate-dnd", 1280, 800)
+    try:
+        source_folder = Path(session.home_dir) / "Downloads" / "dragtest"
+        source_folder.mkdir(parents=True)
+        source_file = source_folder / "dolphin-kate-drop-test.txt"
+        expected_contents = "Private Dolphin-to-Kate drop regression.\nVerified from Kate.\n"
+        source_file.write_text(expected_contents, encoding="utf-8")
+        kate_start_file = Path(session.home_dir) / "kate-start.txt"
+        kate_start_file.write_text("Initial Kate document.\n", encoding="utf-8")
+
+        if session.window_management_version is None or session.window_management_version < 13:
+            pytest.skip("private KWin window management v13 or newer is required")
+        if session.fake_input_version is None or session.fake_input_version < 6:
+            pytest.skip("private KWin fake input v6 or newer is required")
+
+        manager.launch_application(
+            session.session_id,
+            ("dolphin", "--new-window", source_folder.as_uri()),
+        )
+        manager.launch_application(
+            session.session_id,
+            ("kate", "--new", str(kate_start_file)),
+        )
+        # Let both Qt applications finish their first private-session activation
+        # before opening KWin protocol clients to enumerate their windows.
+        time.sleep(2.0)
+
+        def wait_for_window(app_id: str, title_part: str | None = None) -> dict[str, object]:
+            deadline = time.monotonic() + 15.0
+            latest: list[dict[str, object]] = []
+            while time.monotonic() < deadline:
+                latest = manager.list_windows(session.session_id)["windows"]
+                matches = [
+                    window
+                    for window in latest
+                    if window["app_id"] == app_id
+                    and (title_part is None or title_part in str(window["title"]))
+                ]
+                if matches:
+                    return matches[0]
+                time.sleep(0.1)
+            raise AssertionError(
+                f"Timed out waiting for {app_id} title {title_part!r}; last windows: {latest!r}"
+            )
+
+        dolphin = wait_for_window("org.kde.dolphin", "dragtest")
+        kate = wait_for_window("org.kde.kate")
+        dolphin_id = str(dolphin["window_id"])
+        kate_id = str(kate["window_id"])
+
+        dolphin_placement = manager.set_window_geometry(
+            session.session_id, dolphin_id, 0, 0, 640, 800
+        )
+        kate_placement = manager.set_window_geometry(session.session_id, kate_id, 640, 0, 640, 800)
+        assert dolphin_placement["verified"] is True
+        assert kate_placement["verified"] is True
+
+        manager.activate_window(session.session_id, kate_id)
+        manager.send_key_to_window(session.session_id, kate_id, "CTRL+N")
+        wait_for_window("org.kde.kate", "Untitled")
+
+        manager.activate_window(session.session_id, dolphin_id)
+        # In a fresh Dolphin profile, the first icon is centered at this point
+        # after arranging the 1280x800 private output into two equal windows.
+        manager.click(session.session_id, 230, 125)
+        time.sleep(0.2)
+        receipt = manager.drag(
+            session.session_id,
+            230,
+            125,
+            950,
+            350,
+            steps=64,
+            duration_ms=2_000,
+            hold_ms=300,
+            end_pause_ms=1_000,
+        )
+        assert receipt["effect_verified"] is False
+
+        opened_document = wait_for_window("org.kde.kate", source_file.name)
+        opened_document_id = str(opened_document["window_id"])
+        manager.activate_window(session.session_id, opened_document_id)
+        manager.send_key_to_window(session.session_id, opened_document_id, "CTRL+A")
+        manager.send_key_to_window(session.session_id, opened_document_id, "CTRL+C")
+
+        paste = subprocess.run(
+            [shutil.which("wl-paste") or "wl-paste", "--no-newline"],
+            env=manager.runtime_environment(session.session_id),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=5.0,
+        )
+        assert paste.returncode == 0, paste.stderr
+        assert paste.stdout == expected_contents
+    finally:
+        stopped, warnings = manager.stop(session.session_id)
+        assert stopped["status"] == "stopped"
+        assert warnings in (
+            [],
+            [f"Private runtime directory needs manual cleanup: {session.runtime_dir}"],
+        )
+        assert processes_with_environment_marker(session.session_id) == []
+
+
 def test_private_window_list_activation_and_input_are_session_scoped(tmp_path) -> None:
     if shutil.which("kate") is None:
         pytest.skip("Kate is required for the private window-management integration test")
@@ -149,7 +278,10 @@ def test_private_window_list_activation_and_input_are_session_scoped(tmp_path) -
         while time.monotonic() < deadline:
             listing = manager.list_windows(session.session_id)
             matches = [
-                item for item in listing["windows"] if "private-window-scratch.txt" in item["title"]
+                item
+                for item in listing["windows"]
+                if "private-window-scratch.txt" in item["title"]
+                and isinstance(item.get("geometry"), dict)
             ]
             if matches:
                 window = matches[0]

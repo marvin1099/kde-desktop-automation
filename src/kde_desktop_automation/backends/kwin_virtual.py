@@ -16,11 +16,21 @@ from typing import Any, cast
 from urllib.parse import quote
 
 from kde_desktop_automation.backends.displays import DisplayInfo, list_displays
+from kde_desktop_automation.backends.kwin_controls import (
+    pointer_position as read_pointer_position,
+)
+from kde_desktop_automation.backends.kwin_controls import (
+    set_window_frame_geometry,
+)
 from kde_desktop_automation.backends.kwin_input import (
+    DEFAULT_DRAG_DURATION_MS,
+    DEFAULT_DRAG_END_PAUSE_MS,
+    DEFAULT_DRAG_HOLD_MS,
     InputReceipt,
     KWinFakeInput,
     fake_input_version,
     validate_drag_steps,
+    validate_drag_timing,
 )
 from kde_desktop_automation.backends.kwin_window_management import (
     KWinWindowManagementClient,
@@ -92,6 +102,7 @@ def build_private_environment(
             "XDG_DATA_DIRS": _system_data_dirs(),
             "WAYLAND_DISPLAY": wayland_display,
             "DBUS_SESSION_BUS_ADDRESS": dbus_address,
+            "KDE_SESSION_VERSION": "6",
             "QT_QPA_PLATFORM": "wayland",
         }
     )
@@ -426,6 +437,50 @@ class KWinVirtualBackend:
             )
         return cast(dict[str, Any], result["window"])
 
+    def set_window_geometry(
+        self,
+        session: SessionRecord,
+        window_id: str,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+    ) -> dict[str, Any]:
+        self._require_running(session)
+        window = self.inspect_window(session, window_id)
+        if window.get("fullscreen") or window.get("maximized"):
+            raise InteractionError(
+                "window_geometry_state_conflict",
+                "Restore a maximized or fullscreen window before setting its geometry.",
+                details={
+                    "window_id": window_id,
+                    "fullscreen": window.get("fullscreen"),
+                    "maximized": window.get("maximized"),
+                },
+            )
+        environment = self.environment(session)
+        # kdotool's private-session version detection normally comes from Plasma;
+        # this managed compositor deliberately runs without a Plasma shell.
+        environment["KDE_SESSION_VERSION"] = "6"
+        result = set_window_frame_geometry(
+            window_id,
+            x,
+            y,
+            width,
+            height,
+            env=environment,
+        )
+        return result | {
+            "window": self.inspect_window(session, window_id),
+            "note": "Geometry is the KWin frame rectangle; focus is not intentionally changed.",
+        }
+
+    def pointer_position(self, session: SessionRecord) -> dict[str, Any]:
+        self._require_running(session)
+        environment = self.environment(session)
+        environment["KDE_SESSION_VERSION"] = "6"
+        return read_pointer_position(env=environment)
+
     def send_key_to_window(
         self,
         session: SessionRecord,
@@ -544,8 +599,12 @@ class KWinVirtualBackend:
         end_y: int,
         button: str,
         steps: int,
+        duration_ms: int = DEFAULT_DRAG_DURATION_MS,
+        hold_ms: int = DEFAULT_DRAG_HOLD_MS,
+        end_pause_ms: int = DEFAULT_DRAG_END_PAUSE_MS,
     ) -> InputReceipt:
         validate_drag_steps(steps)
+        validate_drag_timing(duration_ms, hold_ms, end_pause_ms)
         for x, y in ((start_x, start_y), (end_x, end_y)):
             if not (0 <= x < session.width and 0 <= y < session.height):
                 raise InteractionError(
@@ -567,6 +626,9 @@ class KWinVirtualBackend:
                 end_y,
                 button=button,
                 steps=steps,
+                duration_ms=duration_ms,
+                hold_ms=hold_ms,
+                end_pause_ms=end_pause_ms,
             )
 
     def _send_input(self, session: SessionRecord, kind: str, value: str) -> InputReceipt:

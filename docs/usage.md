@@ -108,11 +108,13 @@ kde-desktop --session "$TARGET" window find --app-id org.kde.kate --title notes 
 kde-desktop --session "$TARGET" window wait --app-id org.kde.kate --title notes --timeout 10 --json
 kde-desktop --session "$TARGET" window inspect WINDOW_UUID --json
 kde-desktop --session "$TARGET" window activate WINDOW_UUID --json
+kde-desktop --session "$TARGET" window set-geometry WINDOW_UUID 640 0 640 800 --json
 kde-desktop --session "$TARGET" input key WINDOW_UUID CTRL+END --json
-kde-desktop --session "$TARGET" input type WINDOW_UUID $'\nTODO' --json
+kde-desktop --session "$TARGET" input type WINDOW_UUID $'\nExample note' --json
 kde-desktop --session "$TARGET" input click WINDOW_UUID 0.92 0.90 --json
+kde-desktop --session "$TARGET" pointer position --json
+kde-desktop --session "$TARGET" observe --screenshot-output /tmp/desktop.png --json
 kde-desktop --session "$TARGET" display list --json
-kde-desktop --session "$TARGET" screenshot --output /tmp/after.png --json
 kde-desktop --session "$TARGET" capabilities --json
 ```
 
@@ -134,6 +136,24 @@ advertises protocol v13 or newer; capabilities are recorded per session.
 desired state on either target. It is reversible; changing state on the live
 desktop may change focus.
 
+`window set-geometry WINDOW_ID X Y WIDTH HEIGHT` sets a KWin **frame** rectangle
+in logical desktop pixels, then reads it back and returns both the request and
+effective geometry. Restore maximized/fullscreen windows first. The compositor
+may enforce size/placement constraints; an unverified request is reported as an
+error. This is the precise placement operation and does not simulate a title-bar
+drag.
+
+`pointer position` is read-only and reports logical desktop coordinates, KWin's
+screen index, the window under the pointer when known, and the matching display
+name. `observe` gathers window/display lists, active-window focus context,
+pointer context, and a fresh timestamped snapshot ID. Its screenshot is optional
+on the CLI (`--screenshot-output PATH`) and included as image content by the
+`kde_desktop_observe` MCP tool when Spectacle is available. A single-display
+capture includes an explicit
+screenshot-pixel to logical-desktop mapping; a composite multi-display capture
+is reported as unmapped. Neither surface exposes focused child controls or an
+accessibility tree.
+
 `input key`, `input type`, and `input click` require a window UUID and require
 that window to already be active. Activate it explicitly first. Clicks use
 normalized window-relative coordinates from 0 to 1. Private KWin uses content
@@ -154,18 +174,29 @@ layouts. Unlike window-relative `input click`, these operations are global and
 not bound to a window; they move the pointer and may change the active window.
 Inspect `display list` first. A live click must lie on a listed display, and each
 sampled point along a drag must do so as well; `--steps` is bounded from 1 to 64
-(default 8). Global pointer submissions remain best-effort and should be
-verified with a fresh screenshot or independent application state.
+(default 8). Drags also accept `--duration-ms` (0–5000, default 750),
+`--hold-ms` (0–2000, default 100), and `--end-pause-ms` (0–2000, default 250),
+with a combined maximum of 8000 ms. Pacing can make real UI gestures such as
+file drag-and-drop more likely to be recognized, but does not add an app-specific
+drop operation or guarantee delivery. Global pointer submissions remain
+best-effort and should be verified with a fresh screenshot or independent
+application state.
 
 ```bash
 # Explicitly choose the live desktop; coordinates are logical desktop pixels.
 kde-desktop --session user-desktop display list --json
 kde-desktop --session user-desktop input click-at 420 310 --json
 kde-desktop --session user-desktop input click-at --json -- -320 240
-kde-desktop --session user-desktop input drag --steps 12 --json -- -320 240 700 480
+kde-desktop --session user-desktop input drag --steps 48 --duration-ms 1500 --hold-ms 250 --end-pause-ms 500 --json -- -320 240 700 480
 kde-desktop --session user-desktop window set-minimized WINDOW_ID minimized --json
 kde-desktop --session user-desktop window set-minimized WINDOW_ID restored --json
 ```
+
+The generic drag path was exercised in a hidden session by dragging a test file
+from Dolphin into Kate. A paced drag opened the file in Kate; verification used
+the resulting Kate title and a fresh screenshot. This is ordinary pointer input,
+not a Dolphin/Kate-specific workflow. If a drop does not take, inspect the
+source/target surfaces and fresh desktop state before retrying.
 
 #### Targeted player example
 
@@ -330,9 +361,12 @@ affect the user's real devices.
 
 ### MCP server
 
-The stdio MCP server exposes the same window, input, display, MPRIS media,
-PipeWire audio, screenshot, and capability operations, plus private-session
-lifecycle tools.
+The stdio MCP server exposes the same observation, window, pointer/input,
+display, MPRIS media, PipeWire audio, screenshot, and capability operations,
+plus private-session lifecycle tools. `kde_desktop_observe` returns a structured
+snapshot and screenshot image content when Spectacle is available;
+`kde_pointer_position` reads the pointer;
+`kde_window_set_geometry` sets and verifies a KWin frame rectangle.
 Install the project with `uv sync`, then configure your MCP client to launch
 `kde-desktop-mcp` from this checkout:
 
@@ -427,11 +461,21 @@ KDE_DESKTOP_RUN_KWIN_INTEGRATION=1 uv run pytest tests/test_kwin_integration.py 
 KDE_DESKTOP_RUN_USER_DESKTOP_INTEGRATION=1 uv run pytest tests/test_user_desktop_integration.py -q
 ```
 
+The real Dolphin-to-Kate drop test is additionally gated because it launches
+both applications and reads Kate's copied document text from the private
+session clipboard. It requires Dolphin, Kate, `kdotool`, and `wl-paste`:
+
+```bash
+KDE_DESKTOP_RUN_KWIN_INTEGRATION=1 \
+KDE_DESKTOP_RUN_KWIN_DND_INTEGRATION=1 \
+uv run pytest tests/test_kwin_integration.py::test_private_dolphin_drag_and_drop_opens_file_in_kate -q
+```
+
 The package uses a `src/` layout. CLI and MCP transports should call the same
 typed operations; backend commands are invoked with argument arrays, never by
 building shell strings.
 
-## Design proposal
+## Further reading
 
-See [`interface.md`](interface.md) for the target model, coordinates, multi-step
-automation scenario, backend boundaries, and future MCP mapping.
+See [`interface.md`](interface.md) for the operation model and design notes, and
+[`automation-roadmap.md`](automation-roadmap.md) for candidate future work.

@@ -85,11 +85,25 @@ activated. Global-coordinate click and drag are separate operations: they use
 logical desktop pixels, are not bound to a window, and may move the pointer or
 change the active window. Drag interpolation is limited to 64 steps; each point
 on its sampled path must remain inside a listed display (or the private output).
+Duration and start/end pauses are bounded so real UI gestures can be paced. A
+generic paced drag has opened a file from Dolphin in Kate in a private session;
+that smoke test does not imply app-specific drop handling or a delivery guarantee.
 Explicitly activating, minimizing, or restoring a live window may change user
 focus; activation may switch virtual desktops. Input delivery is not
 acknowledged. Private window records retain frame and content geometry
 separately. The live KWin D-Bus path exposes its reported geometry basis rather
 than asserting that it is identical to the private content geometry.
+
+The shared `observe` operation returns a timestamped window/display snapshot,
+KWin's active-window identity, and the pointer position/display when available.
+The CLI can optionally save a screenshot; MCP returns the screenshot as image
+content. A single-display capture includes an explicit screenshot-pixel to
+logical-desktop ratio. Mapping for composite multi-display captures, focused
+child controls, modal ownership, and accessibility elements are not exposed.
+`window set-geometry` uses KWin frame geometry, performs move/resize as distinct
+window-management commands, and verifies effective frame geometry by readback.
+It is placement—not a mouse gesture—and does not promise KWin will accept every
+requested rectangle.
 
 ## Session model and isolation
 
@@ -312,12 +326,15 @@ kde-desktop --session user-desktop window wait --app-id org.kde.kate --timeout 1
 kde-desktop --session agent-0123456789ab window inspect WINDOW_UUID --json
 kde-desktop --session user-desktop window activate WINDOW_UUID --json
 kde-desktop --session user-desktop input key WINDOW_UUID CTRL+END --json
-kde-desktop --session user-desktop input type WINDOW_UUID $'\nTODO' --json
+kde-desktop --session user-desktop input type WINDOW_UUID $'\nExample note' --json
 kde-desktop --session user-desktop input click WINDOW_UUID 0.8 0.9 --json
 kde-desktop --session user-desktop input click-at --json -- -320 240
-kde-desktop --session user-desktop input drag --steps 12 --json -- -320 240 120 400
+kde-desktop --session user-desktop input drag --steps 48 --duration-ms 1500 --hold-ms 250 --end-pause-ms 500 --json -- -320 240 120 400
 kde-desktop --session user-desktop window set-minimized WINDOW_UUID minimized --json
 kde-desktop --session user-desktop window set-minimized WINDOW_UUID restored --json
+kde-desktop --session user-desktop window set-geometry WINDOW_UUID 640 0 640 800 --json
+kde-desktop --session user-desktop pointer position --json
+kde-desktop --session user-desktop observe --screenshot-output /tmp/desktop.png --json
 kde-desktop --session agent-0123456789ab display list --json
 kde-desktop --session user-desktop screenshot --output /tmp/desktop.png
 kde-desktop --session user-desktop capabilities --json
@@ -345,11 +362,12 @@ targets revalidate the calling process's Wayland context on each invocation;
 persistent attach mode. The command syntax matches, while target scope and
 capabilities remain explicit in result envelopes.
 
-The following block is a **proposed future CLI sketch, not runnable with the
-current implementation**. In particular, `observe`, window placement, display
-configuration, window screenshots, and semantic notification/application
-commands shown here are not implemented. See “What the current implementation
-can do” below for the executable subset.
+The following block is a **conceptual future CLI sketch**, not a literal command
+reference. Its `--target` selector and several operations (such as display
+configuration, per-window screenshots, and semantic notification/application
+commands) are not implemented. The current CLI already has target-scoped
+`observe` and KWin frame placement through `window set-geometry`; see “What the
+current implementation can do” below for executable commands.
 
 ```text
 kde-desktop observe [--target session|window:REF|desktop:REF|display:REF] [--format json]
@@ -383,10 +401,11 @@ clicking by global coordinates requires an explicit display/desktop target and
 coordinate space. Destructive actions such as closing a window should be
 separate commands, not hidden side effects of input or selection.
 
-Window placement needs both a coordinate space and an anchor: `--at 0.2,0.1`
-alone is ambiguous. For example, the command above means “put the window's
-top-left corner at 20% across and 10% down the target display.” Placement should
-also report any compositor constraints or clamping.
+The current `window set-geometry` command takes an explicit KWin frame rectangle
+in logical desktop pixels and reports requested and effective geometry. A
+display-anchored placement abstraction with named-display selection, normalized
+position, and an anchor is still a possible higher-level interface; such an
+operation should report compositor constraints or clamping.
 
 An optional `--dry-run` should be supported for actions that can be planned
 without changing the session. It returns the resolved target and intended
@@ -526,8 +545,9 @@ AI.
 
 ## Capabilities and future accessibility
 
-The first milestone can use window metadata plus coordinates. A capability
-report should make the current boundary clear, for example:
+The current milestone uses window metadata, pointer readback, screenshots, and
+coordinates. Capability reports expose the current boundary. An accessibility
+provider remains a separate optional adapter:
 
 ```json
 {
@@ -538,18 +558,26 @@ report should make the current boundary clear, for example:
 }
 ```
 
-Coordinate automation alone is brittle. A later accessibility adapter should
-expose an optional UI element tree (role, accessible name, bounds, actions,
-parent/child relationships) and permit targets such as a button by accessible
-name. Keep that additive: tools without accessibility support must still offer
-window-level inspection, screenshots, and coordinate input. OCR/vision can
-also be layered above screenshots without changing window/display semantics.
+Coordinate automation alone is brittle. A later optional control-discovery
+adapter could expose an accessibility tree (role, accessible name, bounds,
+supported actions, and parent/child relationships) and permit targets such as a
+button by accessible name. OCR could add visible text and locations where
+accessibility metadata is missing; visual/icon detection could cover some
+unlabeled controls. Combining these sources may improve coverage, but adds
+runtime and dependency overhead and can create false positives or incorrect
+matches. Evaluate each source and any combined pipeline carefully before
+implementation, and preserve source/confidence information so ambiguity can be
+handled conservatively. Keep discovery additive: tools without support must
+still offer window-level inspection, screenshots, and coordinate input. A
+detection is a candidate, not proof that an element is actionable or that an
+input had the intended effect.
 
 ## MCP mapping
 
-The stdio server exposes typed tools over `DesktopOperations`: `kde_window_list`,
+The stdio server exposes typed tools over `DesktopOperations`:
+`kde_desktop_observe`, `kde_pointer_position`, `kde_window_list`,
 `kde_window_find`, `kde_window_wait`, `kde_window_inspect`,
-`kde_window_activate`, `kde_window_set_minimized`, `kde_input_key`,
+`kde_window_activate`, `kde_window_set_minimized`, `kde_window_set_geometry`, `kde_input_key`,
 `kde_input_type`, `kde_input_click`, `kde_input_click_at`, `kde_input_drag`,
 `kde_display_list`, `kde_media_list`, `kde_media_inspect`, `kde_media_control`,
 `kde_media_seek_to`,
@@ -561,32 +589,15 @@ list/create/show/use/stop/launch. Every MCP desktop tool requires a
 do not apply. `kde_session_use` changes only the persisted CLI default. The
 server instructions repeat the selector rule and shared-UID lifecycle trust
 model to MCP clients. Domain errors retain stable error codes and structured
-details; both transports use a `schema_version` 1 envelope, and screenshots
-return PNG image content alongside target metadata.
+details; both transports use a `schema_version` 1 envelope, and screenshot tools
+return PNG image content alongside target metadata when capture is available.
+`kde_desktop_observe` returns structured-only data when Spectacle is unavailable.
 
 No MCP tool accepts arbitrary shell commands. Launch is limited to argv in a
-managed private session, while window targeting, focus checks, window state,
-window-relative and global pointer coordinates, capability reporting, and input
-receipts use the same operation layer as the CLI.
-
-## Suggested implementation order
-
-1. Build `capabilities`, `observe`, `window list/get`, and `display list` with
-   structured output, input context, snapshot IDs, and references that actually
-   work across CLI invocations.
-2. Add focus, desktop switching, window move/resize, screenshots, and bounded
-   waits; verify results by re-reading state and return screenshot images to the
-   agent rather than only returning paths.
-3. Add target-relative click, type, key, and scroll operations with explicit
-   coordinate conversion, focus/delivery reporting, and stale-geometry checks.
-4. Add display settings as a separate, higher-impact operation family, with
-   validation and a way to restore the prior configuration where possible.
-5. Add accessibility plus narrowly scoped Plasma/app operations (such as DND)
-   only where safe, testable providers exist; expose them in both transports.
-
-This order delivers useful desktop awareness early, while postponing fragile
-coordinate input and monitor reconfiguration until their target and safety
-contracts are established.
+managed private session, while observation, pointer readback, window targeting,
+focus checks, window state/geometry, window-relative and global pointer
+coordinates, capability reporting, and input receipts use the same operation
+layer as the CLI.
 
 ## Stress test: prepare a bug-triage workspace
 
@@ -608,9 +619,11 @@ constraint.
 
 The principles above are the safe way to approach the task, not a claim that the
 current CLI can complete it. The implemented read/interaction subset is
-capability-scoped: list/find/wait/inspect/activate windows, list displays,
-capture a **full selected output** screenshot, and submit active-window-guarded
-key/text/click input. Use an explicit target in scripts. For a shared MCP server,
+capability-scoped: observe windows, displays, active-window/pointer context, and
+optionally a full-output screenshot; list/find/wait/inspect/activate windows;
+set and verify minimized state or KWin frame geometry; and submit
+active-window-guarded input or global pointer clicks/drags. Use an explicit
+target in scripts. For a shared MCP server,
 pass the private session ID on each call; pass `user-desktop` only when explicitly
 choosing the physical desktop.
 
@@ -620,7 +633,8 @@ session ID and app IDs with values from the selected target. Set
 otherwise use a managed private session ID. Inspect every result. A `window
 find` ambiguity is an error with candidate metadata, not a selection. The
 screenshot is the whole output, not a per-window capture. In MCP,
-`kde_screenshot` returns that image as content; the CLI writes it to the path.
+`kde_desktop_observe` returns the structured snapshot and screenshot as image
+content; the CLI writes the optional screenshot to the path.
 For a private target, first create a running session and launch any apps inside
 it; the commands below cannot see host windows. Its home/browser profile is
 separate from the host's, so do not assume the ticket site is already signed in.
@@ -628,6 +642,7 @@ separate from the host's, so do not assume the ticket site is already signed in.
 ```sh
 TARGET='agent-0123456789ab'
 kde-desktop --session "$TARGET" capabilities --json
+kde-desktop --session "$TARGET" observe --screenshot-output "/tmp/kde-desktop-observe-$$.png" --json
 kde-desktop --session "$TARGET" display list --json
 kde-desktop --session "$TARGET" window list --json
 kde-desktop --session "$TARGET" window find --app-id org.kde.kate --json
@@ -662,7 +677,7 @@ These commands do **not** make the requested workflow achievable end-to-end:
 | Part of request | Live `user-desktop` | Hidden `agent-session` |
 | --- | --- | --- |
 | Inspect windows/displays and capture a screenshot | Yes, when live Wayland/KWin prerequisites are available; reads the real desktop | Yes, scoped to the private session and its virtual output |
-| Put windows on laptop and external displays | Not implemented: current CLI has no window move/placement operation | Not possible in this prototype: the managed session has its own virtual output, not the host's laptop/external displays; move is also unimplemented |
+| Put windows on laptop and external displays | Possible by setting verified frame coordinates on the live desktop; there is no named-display/anchor abstraction, and KWin may constrain placement | The private session has its own virtual output, not the host displays; frame geometry only arranges windows within that private compositor |
 | Change Plasma Do Not Disturb | Unsupported | Unsupported |
 | Update the ticket | Only generic coordinate input is available; no accessibility or app-level operation, and app state must be verified independently | Only if Firefox is launched and the page is available/authenticated in this session's separate profile; it does not operate on the host's existing Firefox window |
 | Preserve/verify unsaved work and ticket state | Unsaved state and app-level postconditions are not exposed | Same limitation; avoid closing windows and independently inspect the app |
@@ -681,15 +696,15 @@ not enough:
 
 | Gap | How an agent can trip | Refinement |
 | --- | --- | --- |
-| Input context is partial | Results identify the intended and observed active window, but not pointer location/display, modal ownership, or focused child control | Add `interaction_context` with pointer coordinates/display and modal/seat context; distinguish active-window focus from widget focus |
+| Input context is partial | `observe` reports the active window and pointer coordinates/display, but not modal ownership, seat context, or the focused child control | Keep distinguishing active-window focus from widget focus; add modal/seat context and focused-control data only through reliable providers |
 | Window references can go stale | UUIDs resolve across CLI calls in one session, but a window may close or its geometry/state may change after observation | Return `stale_target` for closed IDs and optionally bind actions to a recent `snapshot_id` or expected identity/geometry |
 | Similar windows/tabs | `window find` rejects ambiguous window matches and returns candidates, but browser tabs inside one window are not identified | Keep failing closed on ambiguity; add browser/accessibility metadata only through an explicit provider rather than guessing from title |
-| Screenshot mapping is incomplete | MCP delivers image content and CLI writes a path, but neither offers per-window crops or a complete pixel/logical transform for every scale/decoration case | Include screenshot dimensions, target geometry basis, display scale/transform, and an explicit crop-to-window mapping where supported |
+| Screenshot mapping is incomplete | Observation includes screenshot dimensions and a pixel/logical ratio for single-display captures; composite multi-display captures are explicitly unmapped, and per-window crops are unavailable | Extend transforms only where capture geometry, display scale/transform, and decoration policy can be verified; add crop-to-window mapping where supported |
 | Focus and delivery are not guaranteed | KWin fake input checks the named window against active focus but is routed through compositor focus; focus can change during submission and KWin may ignore events | Preserve the no-implicit-activation rule for input; report focus before/after and submission status, and require independent postcondition checks |
 | UI readiness is limited | `window wait` supports unique app/title matches plus KWin fullscreen or display-filling geometry, but cannot wait for a page, dialog, or control to become ready | Add bounded, typed observable UI-state predicates where a reliable provider exists; return the last observation on timeout |
 | UI semantics are missing | Coordinates break after layout changes; “click status” has no stable meaning | Add an optional accessibility provider with element refs, roles, names, bounds, and supported actions; retain screenshot/coordinate fallback |
 | GUI actions are not transactional | A workflow can change several controls and then fail, leaving partial state | Have the agent plan, execute one checkpoint at a time, verify, and report a per-step outcome. Add compensating actions only where safe; do not promise atomic rollback |
-| Capabilities stop at tool plumbing | Managed sessions can launch argv, but launch-by-desktop-entry, DND, and other typed Plasma/app operations are unavailable | Add narrowly scoped typed operations only when supported; do not expose arbitrary shell execution |
+| Capabilities stop at tool plumbing | Generic pointer drag-and-drop gestures are available and paced, but launch-by-desktop-entry, semantic app actions, and typed Plasma operations are unavailable | Add narrowly scoped typed operations only when supported; do not expose arbitrary shell execution or app-specific drag/upload shortcuts |
 | Changes have different risk | Changing resolution or submitting a ticket update is more consequential than taking a screenshot | Classify operations by impact, support dry-run for settings changes, preserve prior values where possible, and require confirmation when the user has not clearly authorized a consequential action |
 
 For multi-step tasks, the agent should maintain a small plan with each step's

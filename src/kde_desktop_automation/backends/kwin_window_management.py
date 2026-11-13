@@ -636,6 +636,9 @@ def _add_listener(connection: _WaylandConnection, proxy: int, callbacks: list[An
             "wayland_listener_failed",
             "Could not register a KWin window-management event listener.",
         )
+    # libwayland retains this array pointer and reads it on later roundtrips;
+    # keeping only the callback objects alive does not keep the array storage.
+    callbacks.append(callback_array)
 
 
 def _decode(value: bytes | None) -> str:

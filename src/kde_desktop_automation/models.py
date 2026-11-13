@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from typing import Any
 
@@ -110,6 +111,7 @@ class SessionRecord:
         window_management_available = (
             self.window_management_version is not None and self.window_management_version >= 13
         )
+        kdotool_available = shutil.which("kdotool") is not None
         session_key_available = fake_input_version is not None and fake_input_version >= 6
         session_click_available = fake_input_version is not None and fake_input_version >= 3
         window_key_available = window_management_available and session_key_available
@@ -138,13 +140,16 @@ class SessionRecord:
             },
             "capabilities": {
                 "display.inspect": True,
-                "screenshot.capture": True,
+                "screenshot.capture": shutil.which("spectacle") is not None,
                 "window.list": window_management_available,
                 "window.find": window_management_available,
                 "window.wait": window_management_available,
                 "window.inspect": window_management_available,
                 "window.activate": window_management_available,
                 "window.set_minimized": window_management_available,
+                "window.set_geometry": window_management_available and kdotool_available,
+                "desktop.observe": window_management_available,
+                "input.pointer_position": kdotool_available,
                 "application.launch": True,
                 "input.key": window_key_available,
                 "input.text": window_key_available,
@@ -173,6 +178,7 @@ class SessionRecord:
             "limitations": [
                 "KWin fake input may be ignored; submission is not proof of application delivery",
                 "the private window protocol is a privileged KDE implementation detail",
+                "accessibility elements and focused child controls are not exposed",
             ],
             "launched_processes": [
                 {"pid": process.pid, "executable": process.executable}

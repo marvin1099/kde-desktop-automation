@@ -149,7 +149,17 @@ def test_click_dispatches_absolute_motion_and_balanced_button_events() -> None:
 def test_drag_moves_with_button_held_and_releases_it_at_the_end() -> None:
     client, connection = _fake_client()
 
-    receipt = client.drag(10, 20, 50, 40, button="left", steps=2)
+    receipt = client.drag(
+        10,
+        20,
+        50,
+        40,
+        button="left",
+        steps=2,
+        duration_ms=0,
+        hold_ms=0,
+        end_pause_ms=0,
+    )
 
     assert connection.lib.calls == [
         (9, 6, (10 * 256, 20 * 256)),
@@ -161,6 +171,53 @@ def test_drag_moves_with_button_held_and_releases_it_at_the_end() -> None:
     assert receipt.action == "drag left from (10, 20) to (50, 40)"
     assert receipt.events_submitted == 5
     assert connection.roundtrips == 5
+
+
+def test_drag_timing_waits_for_start_path_and_drop(monkeypatch: pytest.MonkeyPatch) -> None:
+    client, connection = _fake_client()
+    delays: list[float] = []
+    monkeypatch.setattr("kde_desktop_automation.backends.kwin_input.time.sleep", delays.append)
+
+    receipt = client.drag(
+        10,
+        20,
+        50,
+        40,
+        steps=2,
+        duration_ms=200,
+        hold_ms=100,
+        end_pause_ms=300,
+    )
+
+    assert delays == [0.1, 0.1, 0.1, 0.3]
+    assert receipt.events_submitted == 5
+    assert connection.lib.calls[1] == (2, 6, (0x110, _KEY_STATE_PRESSED))
+    assert connection.lib.calls[-1] == (2, 6, (0x110, _KEY_STATE_RELEASED))
+
+
+@pytest.mark.parametrize(
+    "timing",
+    [
+        (True, 0, 0),
+        (5_001, 0, 0),
+        (0, -1, 0),
+        (0, 0, 2_001),
+        (5_000, 2_000, 2_000),
+    ],
+)
+def test_drag_rejects_invalid_timing(timing: tuple[int, int, int]) -> None:
+    client, _connection = _fake_client()
+
+    with pytest.raises(InteractionError, match="(?i)drag"):
+        client.drag(
+            10,
+            20,
+            50,
+            40,
+            duration_ms=timing[0],
+            hold_ms=timing[1],
+            end_pause_ms=timing[2],
+        )
 
 
 def test_drag_releases_the_button_if_a_motion_request_fails() -> None:

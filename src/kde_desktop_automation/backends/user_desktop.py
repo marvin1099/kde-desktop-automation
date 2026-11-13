@@ -16,11 +16,21 @@ from typing import Any
 from dbus_next.aio import MessageBus  # type: ignore[attr-defined]
 
 from kde_desktop_automation.backends.displays import list_displays
+from kde_desktop_automation.backends.kwin_controls import (
+    pointer_position as read_pointer_position,
+)
+from kde_desktop_automation.backends.kwin_controls import (
+    set_window_frame_geometry,
+)
 from kde_desktop_automation.backends.kwin_input import (
+    DEFAULT_DRAG_DURATION_MS,
+    DEFAULT_DRAG_END_PAUSE_MS,
+    DEFAULT_DRAG_HOLD_MS,
     InputReceipt,
     KWinFakeInput,
     fake_input_version,
     validate_drag_steps,
+    validate_drag_timing,
 )
 from kde_desktop_automation.backends.screenshots import capture_fullscreen
 from kde_desktop_automation.errors import InteractionError
@@ -343,9 +353,13 @@ class UserDesktopBackend:
         *,
         button: str = "left",
         steps: int = 8,
+        duration_ms: int = DEFAULT_DRAG_DURATION_MS,
+        hold_ms: int = DEFAULT_DRAG_HOLD_MS,
+        end_pause_ms: int = DEFAULT_DRAG_END_PAUSE_MS,
     ) -> dict[str, Any]:
         """Drag between explicit logical desktop coordinates."""
         validate_drag_steps(steps)
+        validate_drag_timing(duration_ms, hold_ms, end_pause_ms)
         _validate_integer_point(start_x, start_y)
         _validate_integer_point(end_x, end_y)
         displays = self.list_displays()
@@ -383,6 +397,9 @@ class UserDesktopBackend:
                 end_y,
                 button=button_name,
                 steps=steps,
+                duration_ms=duration_ms,
+                hold_ms=hold_ms,
+                end_pause_ms=end_pause_ms,
             )
         active_after = self._observe_active_window_id()
         data = self._global_pointer_result(receipt, active_before, active_after)
@@ -390,6 +407,9 @@ class UserDesktopBackend:
             "start": {"x": start_x, "y": start_y},
             "end": {"x": end_x, "y": end_y},
             "steps": steps,
+            "duration_ms": duration_ms,
+            "hold_ms": hold_ms,
+            "end_pause_ms": end_pause_ms,
             "space": "logical-desktop-pixels",
         }
         return data
@@ -439,6 +459,50 @@ class UserDesktopBackend:
             "note": "Changing minimized state may change live user focus.",
         }
 
+    def set_window_geometry(
+        self,
+        window_id: str,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+    ) -> dict[str, Any]:
+        """Set and verify the live KWin frame rectangle without activating the window."""
+        normalized_id = _normalize_window_id(window_id)
+        before = self.inspect_window(normalized_id)["window"]
+        if before["fullscreen"] or before["maximized"]:
+            raise InteractionError(
+                "window_geometry_state_conflict",
+                "Restore a maximized or fullscreen window before setting its geometry.",
+                details={
+                    "window_id": normalized_id,
+                    "fullscreen": before["fullscreen"],
+                    "maximized": before["maximized"],
+                },
+            )
+        result = set_window_frame_geometry(
+            normalized_id,
+            x,
+            y,
+            width,
+            height,
+            env=self.environ,
+        )
+        after = self.inspect_window(normalized_id)["window"]
+        return result | {
+            "target": {"kind": "user-desktop", "window_id": normalized_id},
+            "action": "set-geometry",
+            "window": after,
+            "note": (
+                "Geometry is the KWin frame rectangle in logical desktop pixels; "
+                "this does not intentionally change focus."
+            ),
+        }
+
+    def pointer_position(self) -> dict[str, Any]:
+        """Read the actual pointer location in the live desktop without moving it."""
+        return read_pointer_position(env=self.environ)
+
     def screenshot(self, output: Path, *, overwrite: bool = False) -> dict[str, Any]:
         capture = capture_fullscreen(output, env=self.environ, overwrite=overwrite)
         return capture | {
@@ -478,6 +542,9 @@ class UserDesktopBackend:
                 "window.inspect": window_available,
                 "window.activate": window_available,
                 "window.set_minimized": window_available,
+                "window.set_geometry": window_available and shutil.which("kdotool") is not None,
+                "desktop.observe": window_available and shutil.which("wlpdisplays") is not None,
+                "input.pointer_position": shutil.which("kdotool") is not None,
                 "display.inspect": shutil.which("wlpdisplays") is not None,
                 "screenshot.capture": shutil.which("spectacle") is not None,
                 "input.key": key_available,

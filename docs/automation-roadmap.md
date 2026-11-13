@@ -1,10 +1,10 @@
 # Automation support and roadmap
 
-This is a focused, read-only comparison of the audio, media, window/input, and
-display automation patterns in `/home/marvin/Documents/Coding/Bash/Garuda/`
-with the current CLI/MCP operations. Unrelated scripts were out of scope, and no
-Garuda script was run. The roadmap records capability gaps; it does not promise
-that every legacy script should become a built-in operation.
+This is a focused, read-only comparison of audio, media, window/input, and
+display automation patterns with the current CLI/MCP operations. Unrelated
+scripts were out of scope, and no external script was run. The roadmap records
+capability gaps; it does not promise that every legacy script should become a
+built-in operation.
 
 ## Support matrix
 
@@ -13,7 +13,7 @@ that every legacy script should become a built-in operation.
 | `Audio/*status.sh`: identify a named device, report mute state, poll for changes, or coordinate mic/speaker mute state | `audio list` discovers sinks, sources, defaults, volume/mute, and output streams. Typed operations set default, volume, explicit mute state, and route one stream. These are live-desktop-only. | No event subscription, status watcher, or coupled mute policy. A script can poll the JSON CLI, but the tool does not own a monitoring loop. |
 | `Audio/pipewire-script*.sh`, `pw-savewires.sh`, `pw-loadwires.py`, `pw-dewire.sh`: inspect, save, restore, and remove PipeWire port links | Device and output-stream inspection plus single-stream routing are supported. | No arbitrary port/link graph inspection, saved routing profile, or graph-wide unlink. A future profile operation should preview and validate exact endpoints, then apply only the selected changes; do not expose a broad `dewire` action. |
 | `Media/plaingplayer.sh`, `focusedplayer.sh`, and `skip-int-out*.sh`: find a playing MPRIS player, poll status/position, seek at configured thresholds, and associate playback with the focused window | MPRIS player list/inspect and typed transport requests are supported, including relative seek and bounded absolute seek-to. Window records expose app ID, title, and PID. | No playback watcher, configurable skip policy, or reliable MPRIS-player-to-window association. Player names and window IDs remain separate selectors. |
-| `Media/*fullscreen*.sh`, `way-fulls*.sh`, and `Windows/*`: discover windows, test fullscreen/geometry, activate a target, manipulate pointer location, and enter/recover fullscreen | Window list/find/inspect/activate and bounded wait for fullscreen or display-filling geometry are supported. Window-targeted input remains active-window guarded. Global logical-coordinate click and bounded drag support shell-level pointer workflows; minimized state can be set or restored explicitly. | Explicitly activating, minimizing, or restoring a live window may change focus; activation may switch virtual desktops. No typed fullscreen/maximize/placement action, standalone pointer-position query/move, or fullscreen-recovery workflow. Global pointer actions are not window-bound and are not delivery-verified. |
+| `Media/*fullscreen*.sh`, `way-fulls*.sh`, and `Windows/*`: discover windows, test fullscreen/geometry, activate a target, manipulate pointer location, and enter/recover fullscreen | Structured `observe` returns windows/displays plus active-window and pointer context; frame geometry can be set and verified; standalone pointer position, minimized state, and bounded global pointer clicks/drags are supported. Drag has bounded movement duration and start/end pauses. | No fullscreen/maximize or fullscreen-recovery workflow, named-display placement abstraction, or standalone pointer-move operation. Explicitly activating, minimizing, restoring, or repositioning a live window may affect the user's workspace. Global pointer actions remain best-effort and are not window-bound. |
 | `sunshine-virtual-display/*`: create/tear down an extra output on the user's existing KWin desktop, alongside Sunshine-specific streaming hooks | A managed private session creates its own hidden virtual KWin output; `display list` only reads logical geometry on the selected target. | Creating an additional **visible desktop-extension output** on the explicitly selected `user-desktop` is a project-fit feature, not streaming integration. It is not implemented yet. A future create operation should take bounded dimensions and verify/report the effective output; removal must be limited to outputs created and tracked by this tool. Phone/client connection, capture, and Sunshine lifecycle orchestration are out of scope. Generic physical-output disable/mode changes are separate, higher-risk features. |
 
 The current operation contract and target model are described in
@@ -34,11 +34,12 @@ Prioritize improvements in this order:
    versioned, provide exact selectors and actionable errors, and put meaningful
    bounds/enums in MCP schemas. (This pass addresses these items.)
 2. **Keep input semantics explicit.** KWin fake input is compositor-routed and
-   does not acknowledge app delivery or provide atomic window routing. Keep
-   window-targeted input active-window guarded; global pointer operations use
-   logical desktop coordinates and can move the pointer or change active focus.
-   Do not claim focus preservation or test against the user's live desktop
-   without explicit authorization.
+    does not acknowledge app delivery or provide atomic window routing. Keep
+    window-targeted input active-window guarded; global pointer operations use
+    logical desktop coordinates and can move the pointer or change active focus.
+    Drag pacing improves recognition for real UI gestures, but does not verify
+    delivery. Do not claim focus preservation or test against the user's live
+    desktop without explicit authorization.
 3. **Media workflow primitives.** Absolute seek is now available through
    `media seek-to` / `kde_media_seek_to`. The relative seek still shares
    `media control` with transport actions, so its conditional `seconds` argument
@@ -51,11 +52,11 @@ Prioritize improvements in this order:
    list/preview/apply operations over exact PipeWire ports, with a validated
    diff and per-link results. Keep one-stream routing separate and avoid
    unscoped graph reset/removal.
-5. **Explicit window state actions.** Minimize/restore is now an idempotent,
-   verified desired-state operation. Add fullscreen, maximize/restore, or
-   move/resize only after their KWin semantics and verification are defined;
-   prefer `set` operations over ambiguous toggles. Standalone pointer position
-   query/movement can be considered separately from click and drag.
+5. **Explicit window state actions.** Minimize/restore and frame-geometry
+    placement now use idempotent desired-state operations with readback.
+    Fullscreen/maximize/restore still need explicit KWin semantics and
+    verification; prefer `set` operations over ambiguous toggles. Pointer
+    position is read-only; pointer movement remains a separate future operation.
 6. **User-visible virtual displays.** Consider a typed create/remove operation
    for an extra output attached to the existing KWin `user-desktop`. This extends
    the user's visible desktop; it is not the hidden output of an `agent-session`.
@@ -68,6 +69,36 @@ Prioritize improvements in this order:
 7. **Optional event/wait support.** Replace fragile shell polling only where a
    bounded, cancellable wait materially improves a workflow. Keep long-running
    watchers opt-in and outside basic list/inspect calls.
+
+## Future candidate: UI control discovery
+
+Control discovery is a possible future feature, not a committed implementation
+plan. The current interface exposes windows, screenshots, and coordinate input,
+but does not identify buttons, fields, menu items, or other controls within a
+window. Possible sources for discovering them include:
+
+- **Accessibility metadata (for example, AT-SPI):** provides semantic roles,
+  accessible names, bounds, and sometimes supported actions. It is usually the
+  strongest source when an application exposes a complete, trustworthy tree,
+  but coverage and availability vary across applications and environments.
+- **OCR over screenshots:** provides visible text and its location, including
+  text missing from the accessibility tree. Text alone does not prove that a
+  label is interactive, so OCR detections must not automatically be treated as
+  controls.
+- **Visual/icon detection:** may find unlabeled controls that neither the
+  accessibility tree nor OCR describes. It can require additional models or
+  image-processing dependencies and may confuse similar-looking UI elements.
+
+These approaches could be combined for better coverage, for example by matching
+OCR text boxes to nearby accessibility nodes and using visual detection for
+remaining gaps. A combined pipeline also adds processing time, resource use,
+dependencies, and implementation complexity. Each source can produce false
+positives, and combining sources can introduce duplicate or incorrectly matched
+candidates. Any implementation should be evaluated carefully on representative
+applications and layouts for coverage, false-positive rate, and runtime cost;
+it should retain source evidence, handle ambiguity conservatively, and never
+assume a detected candidate is actionable without verification. This remains an
+exploration item rather than a near-term commitment.
 
 ## AI and scripting usability
 

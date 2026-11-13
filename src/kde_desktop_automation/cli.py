@@ -10,7 +10,14 @@ from rich.console import Console
 from rich.table import Table
 from typer import Context
 
-from kde_desktop_automation.backends.kwin_input import MAX_DRAG_STEPS
+from kde_desktop_automation.backends.kwin_input import (
+    DEFAULT_DRAG_DURATION_MS,
+    DEFAULT_DRAG_END_PAUSE_MS,
+    DEFAULT_DRAG_HOLD_MS,
+    MAX_DRAG_DURATION_MS,
+    MAX_DRAG_PAUSE_MS,
+    MAX_DRAG_STEPS,
+)
 from kde_desktop_automation.backends.user_desktop import UserDesktopBackend
 from kde_desktop_automation.diagnostics import build_doctor_report
 from kde_desktop_automation.errors import InteractionError
@@ -35,7 +42,7 @@ user_desktop_app = typer.Typer(
     no_args_is_help=True,
 )
 user_window_app = typer.Typer(
-    help="Inspect, focus, and set the minimized state of live desktop windows.",
+    help="Inspect, focus, set frame geometry, and minimize/restore live desktop windows.",
     no_args_is_help=True,
 )
 user_input_app = typer.Typer(
@@ -44,9 +51,13 @@ user_input_app = typer.Typer(
 )
 window_app = typer.Typer(
     help=(
-        "List, inspect, find, and activate windows in the selected session. "
+        "List, inspect, find, activate, and set window geometry in the selected session. "
         "Select it with global --session before 'window'."
     ),
+    no_args_is_help=True,
+)
+pointer_app = typer.Typer(
+    help="Read the pointer position in the selected session without moving it.",
     no_args_is_help=True,
 )
 input_app = typer.Typer(
@@ -80,6 +91,7 @@ user_desktop_app.add_typer(user_window_app, name="window")
 user_desktop_app.add_typer(user_input_app, name="input")
 app.add_typer(window_app, name="window")
 app.add_typer(input_app, name="input")
+app.add_typer(pointer_app, name="pointer")
 app.add_typer(display_app, name="display")
 app.add_typer(media_app, name="media")
 app.add_typer(audio_app, name="audio")
@@ -114,6 +126,40 @@ def doctor(
 ) -> None:
     """Report installed tools and safe, currently implemented capabilities."""
     _run(lambda: (build_doctor_report(), []), json_output=json_output)
+
+
+@app.command()
+def observe(
+    ctx: Context,
+    screenshot_output: Path | None = typer.Option(
+        None,
+        "--screenshot-output",
+        help="Optionally capture a screenshot to this path and include its coordinate mapping.",
+    ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Replace an existing screenshot path; requires --screenshot-output.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Observe windows, displays, pointer/focus context, and optionally a screenshot."""
+
+    def action() -> tuple[dict[str, Any], list[str]]:
+        if overwrite and screenshot_output is None:
+            raise InteractionError(
+                "invalid_observe_options",
+                "--overwrite requires --screenshot-output.",
+            )
+        return (
+            _operations(ctx).observe(screenshot_output=screenshot_output, overwrite=overwrite),
+            [],
+        )
+
+    _run(
+        action,
+        json_output=json_output,
+    )
 
 
 @session_app.command("create")
@@ -313,6 +359,25 @@ def set_window_minimized(
     )
 
 
+@window_app.command("set-geometry")
+def set_window_geometry(
+    ctx: Context,
+    window_id: str = typer.Argument(
+        ..., help="UUID from window list/find for the selected session."
+    ),
+    x: int = typer.Argument(..., help="Requested KWin frame x position in logical desktop pixels."),
+    y: int = typer.Argument(..., help="Requested KWin frame y position in logical desktop pixels."),
+    width: int = typer.Argument(..., help="Requested frame width in logical desktop pixels."),
+    height: int = typer.Argument(..., help="Requested frame height in logical desktop pixels."),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Set an explicit KWin frame rectangle and verify its effective geometry."""
+    _run(
+        lambda: (_operations(ctx).window_set_geometry(window_id, x, y, width, height), []),
+        json_output=json_output,
+    )
+
+
 @window_app.command("wait")
 def wait_for_window(
     ctx: Context,
@@ -420,6 +485,27 @@ def input_drag(
         max=MAX_DRAG_STEPS,
         help=f"Interpolated movement steps (1–{MAX_DRAG_STEPS}).",
     ),
+    duration_ms: int = typer.Option(
+        DEFAULT_DRAG_DURATION_MS,
+        "--duration-ms",
+        min=0,
+        max=MAX_DRAG_DURATION_MS,
+        help="Time spent moving along the drag path (0 disables pacing).",
+    ),
+    hold_ms: int = typer.Option(
+        DEFAULT_DRAG_HOLD_MS,
+        "--hold-ms",
+        min=0,
+        max=MAX_DRAG_PAUSE_MS,
+        help="Time to hold the button at the start before movement.",
+    ),
+    end_pause_ms: int = typer.Option(
+        DEFAULT_DRAG_END_PAUSE_MS,
+        "--end-pause-ms",
+        min=0,
+        max=MAX_DRAG_PAUSE_MS,
+        help="Time to pause at the destination before releasing the button.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Drag between global logical-desktop points; every sampled point must be on a display."""
@@ -432,6 +518,9 @@ def input_drag(
                 end_y,
                 button=button,
                 steps=steps,
+                duration_ms=duration_ms,
+                hold_ms=hold_ms,
+                end_pause_ms=end_pause_ms,
             ),
             [],
         ),
@@ -446,6 +535,15 @@ def list_displays(
 ) -> None:
     """List logical displays for the selected session."""
     _run(lambda: (_operations(ctx).display_list(), []), json_output=json_output)
+
+
+@pointer_app.command("position")
+def pointer_position(
+    ctx: Context,
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Read the current pointer position without generating input."""
+    _run(lambda: (_operations(ctx).pointer_position(), []), json_output=json_output)
 
 
 @media_app.command("list")
@@ -694,6 +792,25 @@ def set_user_window_minimized(
     )
 
 
+@user_window_app.command("set-geometry")
+def set_user_window_geometry(
+    window_id: str = typer.Argument(..., help="UUID from user-desktop window list/find."),
+    x: int = typer.Argument(..., help="Requested KWin frame x position in logical desktop pixels."),
+    y: int = typer.Argument(..., help="Requested KWin frame y position in logical desktop pixels."),
+    width: int = typer.Argument(..., help="Requested frame width in logical desktop pixels."),
+    height: int = typer.Argument(..., help="Requested frame height in logical desktop pixels."),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Set and verify a live window's frame rectangle without intentionally changing focus."""
+    _run(
+        lambda: (
+            _user_desktop_operations().window_set_geometry(window_id, x, y, width, height),
+            [],
+        ),
+        json_output=json_output,
+    )
+
+
 @user_desktop_app.command("screenshot")
 def screenshot_user_desktop(
     output: Path = typer.Option(..., "--output", "-o", help="Destination PNG path."),
@@ -777,6 +894,27 @@ def drag_user_desktop(
         max=MAX_DRAG_STEPS,
         help=f"Interpolated movement steps (1–{MAX_DRAG_STEPS}).",
     ),
+    duration_ms: int = typer.Option(
+        DEFAULT_DRAG_DURATION_MS,
+        "--duration-ms",
+        min=0,
+        max=MAX_DRAG_DURATION_MS,
+        help="Time spent moving along the drag path (0 disables pacing).",
+    ),
+    hold_ms: int = typer.Option(
+        DEFAULT_DRAG_HOLD_MS,
+        "--hold-ms",
+        min=0,
+        max=MAX_DRAG_PAUSE_MS,
+        help="Time to hold the button at the start before movement.",
+    ),
+    end_pause_ms: int = typer.Option(
+        DEFAULT_DRAG_END_PAUSE_MS,
+        "--end-pause-ms",
+        min=0,
+        max=MAX_DRAG_PAUSE_MS,
+        help="Time to pause at the destination before releasing the button.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Drag between live desktop points; every sampled point must be on a display."""
@@ -789,6 +927,9 @@ def drag_user_desktop(
                 end_y,
                 button=button,
                 steps=steps,
+                duration_ms=duration_ms,
+                hold_ms=hold_ms,
+                end_pause_ms=end_pause_ms,
             ),
             [],
         ),
