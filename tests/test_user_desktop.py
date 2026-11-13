@@ -69,6 +69,7 @@ def _backend(
 ) -> tuple[user_desktop.UserDesktopBackend, list[tuple[str, ...]]]:
     environment = _desktop_environment(tmp_path)
     monkeypatch.setattr(user_desktop, "require_executable", lambda _name: "/usr/bin/kdotool")
+    monkeypatch.setattr(kwin_controls, "require_executable", lambda _name: "/usr/bin/kdotool")
     commands: list[tuple[str, ...]] = []
     active_values = list(active_ids or [WINDOW_ID])
     current_active = [active_values[-1]]

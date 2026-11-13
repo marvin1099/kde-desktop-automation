@@ -1,5 +1,6 @@
 import json
 
+from rich.text import Text
 from typer.testing import CliRunner
 
 from kde_desktop_automation.cli import app
@@ -437,16 +438,20 @@ def test_nested_help_explains_global_target_placement_and_live_audio_limit() -> 
     window_list_help = runner.invoke(app, ["window", "list", "--help"])
     audio_help = runner.invoke(app, ["audio", "--help"])
     audio_list_help = runner.invoke(app, ["audio", "list", "--help"])
-    audio_list_help_text = " ".join(audio_list_help.stdout.split())
+    root_help_text = " ".join(Text.from_ansi(root_help.stdout).plain.split())
+    window_help_text = " ".join(Text.from_ansi(window_help.stdout).plain.split())
+    window_list_help_text = " ".join(Text.from_ansi(window_list_help.stdout).plain.split())
+    audio_help_text = " ".join(Text.from_ansi(audio_help.stdout).plain.split())
+    audio_list_help_text = " ".join(Text.from_ansi(audio_list_help.stdout).plain.split())
 
     assert root_help.exit_code == 0
-    assert "--session before the command group" in root_help.stdout
+    assert "--session before the command group" in root_help_text
     assert window_help.exit_code == 0
-    assert "global --session before 'window'" in window_help.stdout
+    assert "global --session before 'window'" in window_help_text
     assert window_list_help.exit_code == 0
-    assert "global --session before 'window'" in window_list_help.stdout
+    assert "global --session before 'window'" in window_list_help_text
     assert audio_help.exit_code == 0
-    assert "--session user-desktop before 'audio'" in audio_help.stdout
+    assert "--session user-desktop before 'audio'" in audio_help_text
     assert audio_list_help.exit_code == 0
     assert "live only" in audio_list_help_text
     assert "--session user-desktop before audio" in audio_list_help_text

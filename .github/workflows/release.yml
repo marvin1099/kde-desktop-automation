@@ -10,6 +10,8 @@ permissions:
 jobs:
   draft-release:
     runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: "3.12"
     permissions:
       contents: write
     steps:
