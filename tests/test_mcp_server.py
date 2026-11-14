@@ -175,6 +175,24 @@ class FakeOperations:
         output.write_bytes(self.screenshot_png)
         return {"target": {"kind": self.session}, "path": str(output), "width": 1, "height": 1}
 
+    def screenshot_window(
+        self,
+        window_id: str,
+        output: Path,
+        *,
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        del overwrite
+        output.write_bytes(self.screenshot_png)
+        return {
+            "target": {"kind": self.session, "window_id": window_id},
+            "path": str(output),
+            "width": 1,
+            "height": 1,
+            "capture_mode": "active-window",
+            "target_window_verified": True,
+        }
+
 
 def _server() -> FastMCP:
     FakeOperations.selected_sessions.clear()
@@ -215,6 +233,7 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         "kde_audio_set_mute",
         "kde_audio_route_stream",
         "kde_screenshot",
+        "kde_screenshot_window",
         "kde_desktop_observe",
         "kde_capabilities",
     } <= names
@@ -227,6 +246,8 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         in listing_tool.inputSchema["properties"]["session"]["description"]
     )
     assert "user-desktop" in listing_tool.inputSchema["properties"]["session"]["description"]
+    window_screenshot_tool = next(tool for tool in tools if tool.name == "kde_screenshot_window")
+    assert {"session", "window_id"} <= set(window_screenshot_tool.inputSchema.get("required", []))
     desktop_tool_names = {
         "kde_window_list",
         "kde_window_find",
@@ -252,6 +273,7 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         "kde_audio_set_mute",
         "kde_audio_route_stream",
         "kde_screenshot",
+        "kde_screenshot_window",
         "kde_desktop_observe",
         "kde_capabilities",
     }
@@ -550,6 +572,38 @@ def test_mcp_screenshot_returns_png_image_and_metadata(tmp_path: Path) -> None:
     assert base64.b64decode(images[0].data) == FakeOperations.screenshot_png
 
 
+def test_mcp_window_screenshot_returns_selected_window_image_and_metadata(
+    tmp_path: Path,
+) -> None:
+    server = _server()
+    output = tmp_path / "window.png"
+    window_id = "12345678-1234-5678-1234-567812345678"
+
+    result = asyncio.run(
+        server.call_tool(
+            "kde_screenshot_window",
+            {
+                "session": "user-desktop",
+                "window_id": window_id,
+                "output": str(output),
+            },
+        )
+    )
+
+    assert isinstance(result, CallToolResult)
+    assert result.structuredContent["ok"] is True
+    assert result.structuredContent["data"]["target"] == {
+        "kind": "user-desktop",
+        "window_id": window_id,
+    }
+    assert result.structuredContent["data"]["capture_mode"] == "active-window"
+    assert result.structuredContent["data"]["target_window_verified"] is True
+    assert output.read_bytes() == FakeOperations.screenshot_png
+    image = next(block for block in result.content if isinstance(block, ImageContent))
+    assert base64.b64decode(image.data) == FakeOperations.screenshot_png
+    assert FakeOperations.selected_sessions == ["user-desktop"]
+
+
 def test_mcp_instructions_state_live_desktop_safety() -> None:
     server = _server()
     instructions = " ".join((server.instructions or "").split())
@@ -562,6 +616,7 @@ def test_mcp_instructions_state_live_desktop_safety() -> None:
     assert "PipeWire audio tools are live-user-desktop only" in instructions
     assert "not window-bound" in instructions
     assert "may change user focus" in instructions
+    assert "Spectacle's native active-window capture" in instructions
 
 
 def test_mcp_session_selector_is_not_implicit_for_any_server_mode() -> None:
@@ -610,4 +665,5 @@ def test_mcp_server_completes_stdio_handshake_and_lists_tools() -> None:
 
     assert "kde_window_list" in names
     assert "kde_screenshot" in names
+    assert "kde_screenshot_window" in names
     assert "kde_session_create" in names

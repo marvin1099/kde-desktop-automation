@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -90,6 +91,7 @@ class FakeManager:
 class FakeUserDesktop:
     def __init__(self) -> None:
         self.calls: list[tuple[str, ...]] = []
+        self.active_window_id: str | None = None
 
     def list_windows(self) -> dict[str, Any]:
         self.calls.append(("list_windows",))
@@ -135,6 +137,32 @@ class FakeUserDesktop:
     def set_window_geometry(self, window_id, x, y, width, height):
         self.calls.append(("set_window_geometry", window_id, x, y, width, height))
         return {"target": {"kind": "user-desktop", "window_id": window_id}}
+
+    def inspect_window(self, window_id: str) -> dict[str, Any]:
+        self.calls.append(("inspect_window", window_id))
+        return {
+            "target": {"kind": "user-desktop"},
+            "window": {"window_id": window_id, "active": self.active_window_id == window_id},
+        }
+
+    def activate_window(self, window_id: str) -> dict[str, Any]:
+        self.calls.append(("activate_window", window_id))
+        self.active_window_id = window_id
+        return {"active_window_verified": True}
+
+    def screenshot_active_window(
+        self,
+        output: Path,
+        *,
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        self.calls.append(("screenshot_active_window", str(output), overwrite))
+        return {
+            "target": {"kind": "user-desktop"},
+            "path": str(output),
+            "capture_mode": "active-window",
+            "coordinate_space": "screenshot-pixels",
+        }
 
     def pointer_position(self):
         self.calls.append(("pointer_position",))
@@ -192,6 +220,43 @@ def test_explicit_live_target_never_constructs_private_manager(monkeypatch) -> N
 
     assert result["target"]["kind"] == "user-desktop"
     assert live_desktop.calls == [("list_windows",)]
+
+
+def test_window_screenshot_activates_selected_window_before_native_capture(
+    tmp_path: Path,
+) -> None:
+    live_desktop = FakeUserDesktop()
+    operations = DesktopOperations("user-desktop", user_desktop=live_desktop)  # type: ignore[arg-type]
+
+    result = operations.screenshot_window("window-1", tmp_path / "window.png")
+
+    assert [call[0] for call in live_desktop.calls] == [
+        "inspect_window",
+        "activate_window",
+        "screenshot_active_window",
+        "inspect_window",
+    ]
+    assert result["capture_mode"] == "active-window"
+    assert result["window"]["active"] is True
+    assert result["focus_changed"] is True
+    assert result["target_window_verified"] is True
+
+
+def test_window_screenshot_does_not_reactivate_an_already_active_window(
+    tmp_path: Path,
+) -> None:
+    live_desktop = FakeUserDesktop()
+    live_desktop.active_window_id = "window-1"
+    operations = DesktopOperations("user-desktop", user_desktop=live_desktop)  # type: ignore[arg-type]
+
+    result = operations.screenshot_window("window-1", tmp_path / "window.png")
+
+    assert [call[0] for call in live_desktop.calls] == [
+        "inspect_window",
+        "screenshot_active_window",
+        "inspect_window",
+    ]
+    assert result["focus_changed"] is False
 
 
 def test_global_pointer_and_minimize_operations_use_the_explicit_live_target() -> None:

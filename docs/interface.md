@@ -490,16 +490,15 @@ examples include `ambiguous_target`, `stale_target`, `unsupported`,
 `permission_denied`, and `backend_unavailable`. Reserve stderr and non-zero exit
 codes for failures; JSON mode should still emit the error envelope.
 
-Screenshots should normally be written to a requested path and return that path
-plus capture metadata (target, geometry, timestamp, coordinate space). The
-current shared screenshot command captures the full selected output, not an
-individual window. Avoid
-embedding large image data in normal JSON responses. A later MCP transport can
-return image content using MCP's image content type while preserving the same
-metadata. For visual automation, the agent must actually receive the image, not
-just a path it cannot read. Include image pixel dimensions, crop/decorations
-policy, and a transform between screenshot pixels and the target's logical
-coordinates so points chosen from an image can be mapped correctly.
+Screenshots return capture metadata (target, geometry, and coordinate space) and
+are optionally saved to a requested path. The full-desktop capture uses
+Spectacle's fullscreen mode; `kde_screenshot_window` uses Spectacle's native
+active-window mode for the selected window ID rather than cropping the desktop.
+The target window is activated when needed, which can change focus on the live
+desktop; the capture includes window decorations. MCP returns image content so
+the agent can inspect it directly. Window-image pixel-to-logical-coordinate
+mapping is not currently provided; agents should use the window-targeted input
+operations rather than infer global coordinates from that image.
 
 ## Example agent loop
 
@@ -632,9 +631,11 @@ session ID and app IDs with values from the selected target. Set
 `TARGET='user-desktop'` only when explicitly opting into the physical desktop;
 otherwise use a managed private session ID. Inspect every result. A `window
 find` ambiguity is an error with candidate metadata, not a selection. The
-screenshot is the whole output, not a per-window capture. In MCP,
-`kde_desktop_observe` returns the structured snapshot and screenshot as image
-content; the CLI writes the optional screenshot to the path.
+ordinary screenshot is the whole output. MCP also exposes
+`kde_screenshot_window` for direct per-window capture; it activates the selected
+window when needed. `kde_desktop_observe` returns the structured snapshot and
+full-desktop screenshot as image content; the CLI writes the optional screenshot
+to the path.
 For a private target, first create a running session and launch any apps inside
 it; the commands below cannot see host windows. Its home/browser profile is
 separate from the host's, so do not assume the ticket site is already signed in.

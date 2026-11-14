@@ -9,7 +9,7 @@ import zlib
 from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Literal
 
 from kde_desktop_automation.errors import InteractionError
 from kde_desktop_automation.process import require_success, run_command
@@ -38,11 +38,45 @@ def capture_fullscreen(
     overwrite: bool = False,
     expected_size: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
+    return _capture_screenshot(
+        output,
+        env=env,
+        overwrite=overwrite,
+        expected_size=expected_size,
+        mode="fullscreen",
+    )
+
+
+def capture_active_window(
+    output: Path,
+    *,
+    env: Mapping[str, str],
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Capture KWin's active window directly with Spectacle, not by cropping."""
+    return _capture_screenshot(
+        output,
+        env=env,
+        overwrite=overwrite,
+        expected_size=None,
+        mode="active-window",
+    )
+
+
+def _capture_screenshot(
+    output: Path,
+    *,
+    env: Mapping[str, str],
+    overwrite: bool,
+    expected_size: tuple[int, int] | None,
+    mode: Literal["fullscreen", "active-window"],
+) -> dict[str, Any]:
     spectacle = shutil.which("spectacle")
     if spectacle is None:
+        target_description = "private KWin output" if mode == "fullscreen" else "active window"
         raise InteractionError(
             "backend_unavailable",
-            "Spectacle is required to capture the private KWin output.",
+            f"Spectacle is required to capture the {target_description}.",
             details={"executable": "spectacle"},
         )
 
@@ -93,9 +127,18 @@ def capture_fullscreen(
     temporary = Path(temporary_name)
 
     try:
+        spectacle_env = dict(env)
+        spectacle_env["QT_QPA_PLATFORM"] = "wayland"
         result = run_command(
-            [spectacle, "--background", "--fullscreen", "--nonotify", "--output", str(temporary)],
-            env=env,
+            [
+                spectacle,
+                "--background",
+                "--fullscreen" if mode == "fullscreen" else "--activewindow",
+                "--nonotify",
+                "--output",
+                str(temporary),
+            ],
+            env=spectacle_env,
             timeout=20.0,
         )
         require_success(result)
@@ -117,13 +160,18 @@ def capture_fullscreen(
             # The validated destination has already been installed atomically;
             # a leftover hidden temp is safer than reporting a false failure.
 
-    return {
+    capture = {
         "path": str(destination),
         "width": width,
         "height": height,
-        "coordinate_space": "private-output-pixels",
+        "coordinate_space": (
+            "private-output-pixels" if mode == "fullscreen" else "active-window-pixels"
+        ),
         "source": "spectacle",
     }
+    if mode == "active-window":
+        capture["capture_mode"] = "active-window"
+    return capture
 
 
 def _install_screenshot(temporary: Path, destination: Path, *, overwrite: bool) -> None:

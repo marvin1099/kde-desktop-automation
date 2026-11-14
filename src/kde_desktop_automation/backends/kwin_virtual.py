@@ -46,7 +46,10 @@ from kde_desktop_automation.backends.kwin_window_management import (
 from kde_desktop_automation.backends.kwin_window_management import (
     set_minimized_window as set_private_window_minimized,
 )
-from kde_desktop_automation.backends.screenshots import capture_fullscreen
+from kde_desktop_automation.backends.screenshots import (
+    capture_active_window,
+    capture_fullscreen,
+)
 from kde_desktop_automation.errors import InteractionError
 from kde_desktop_automation.models import ProcessIdentity, SessionRecord
 from kde_desktop_automation.paths import RuntimePaths, SessionPaths
@@ -840,6 +843,20 @@ class KWinVirtualBackend:
             env=self.environment(session),
             overwrite=overwrite,
             expected_size=(session.width, session.height),
+        )
+
+    def screenshot_active_window(
+        self,
+        session: SessionRecord,
+        output: Path,
+        *,
+        overwrite: bool,
+    ) -> dict[str, object]:
+        self._require_running(session)
+        return capture_active_window(
+            output,
+            env=self.environment(session),
+            overwrite=overwrite,
         )
 
     def environment(self, session: SessionRecord) -> dict[str, str]:

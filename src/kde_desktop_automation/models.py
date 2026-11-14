@@ -141,6 +141,8 @@ class SessionRecord:
             "capabilities": {
                 "display.inspect": True,
                 "screenshot.capture": shutil.which("spectacle") is not None,
+                "screenshot.window.capture": window_management_available
+                and shutil.which("spectacle") is not None,
                 "window.list": window_management_available,
                 "window.find": window_management_available,
                 "window.wait": window_management_available,

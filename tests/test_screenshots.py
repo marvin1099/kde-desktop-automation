@@ -34,7 +34,7 @@ def test_capture_fullscreen_uses_spectacle_in_requested_environment(tmp_path, mo
     monkeypatch.setattr(screenshots.shutil, "which", lambda _: "/usr/bin/spectacle")
 
     def fake_run(argv, *, env, timeout):
-        assert env == session_env
+        assert env == session_env | {"QT_QPA_PLATFORM": "wayland"}
         assert timeout == 20.0
         Path(argv[-1]).write_bytes(_png_image(1280, 800))
         return CommandResult(tuple(argv), 0, "", "")
@@ -44,6 +44,29 @@ def test_capture_fullscreen_uses_spectacle_in_requested_environment(tmp_path, mo
 
     assert result["width"] == 1280
     assert result["height"] == 800
+    assert os.stat(output).st_mode & 0o777 == 0o600
+
+
+def test_capture_active_window_uses_spectacle_native_window_mode(tmp_path, monkeypatch) -> None:
+    output = tmp_path / "window.png"
+    session_env = {"WAYLAND_DISPLAY": "agent-wayland"}
+    monkeypatch.setattr(screenshots.shutil, "which", lambda _: "/usr/bin/spectacle")
+
+    def fake_run(argv, *, env, timeout):
+        assert env == session_env | {"QT_QPA_PLATFORM": "wayland"}
+        assert timeout == 20.0
+        assert "--activewindow" in argv
+        assert "--fullscreen" not in argv
+        Path(argv[-1]).write_bytes(_png_image(520, 360))
+        return CommandResult(tuple(argv), 0, "", "")
+
+    monkeypatch.setattr(screenshots, "run_command", fake_run)
+    result = screenshots.capture_active_window(output, env=session_env)
+
+    assert result["capture_mode"] == "active-window"
+    assert result["coordinate_space"] == "active-window-pixels"
+    assert result["width"] == 520
+    assert result["height"] == 360
     assert os.stat(output).st_mode & 0o777 == 0o600
 
 

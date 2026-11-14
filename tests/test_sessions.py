@@ -77,6 +77,20 @@ class FakeBackend:
     ) -> dict[str, object]:
         return {"path": str(output), "width": session.width, "height": session.height}
 
+    def screenshot_active_window(
+        self,
+        session: SessionRecord,
+        output: Path,
+        *,
+        overwrite: bool,
+    ) -> dict[str, object]:
+        return {
+            "path": str(output),
+            "width": 320,
+            "height": 240,
+            "capture_mode": "active-window",
+        }
+
     def launch_application(
         self,
         session: SessionRecord,
@@ -196,9 +210,23 @@ def test_private_capabilities_report_screenshot_executable_availability(
     )
 
     assert manager.get_session(session.session_id)["capabilities"]["screenshot.capture"] is True
+    assert (
+        manager.get_session(session.session_id)["capabilities"]["screenshot.window.capture"]
+        is False
+    )
+
+    session = replace(session, window_management_version=13)
+    manager.store.save(session)
+    assert (
+        manager.get_session(session.session_id)["capabilities"]["screenshot.window.capture"] is True
+    )
 
     monkeypatch.setattr(models.shutil, "which", lambda _executable: None)
     assert manager.get_session(session.session_id)["capabilities"]["screenshot.capture"] is False
+    assert (
+        manager.get_session(session.session_id)["capabilities"]["screenshot.window.capture"]
+        is False
+    )
 
 
 def test_runtime_environment_is_for_one_running_private_session(manager: SessionManager) -> None:
@@ -501,3 +529,16 @@ def test_private_screenshot_includes_target_and_shared_coordinate_space(
 
     assert capture["target"] == {"kind": "agent-session", "session_id": session.session_id}
     assert capture["coordinate_space"] == "screenshot-pixels"
+
+
+def test_private_active_window_screenshot_reports_target_and_mode(
+    manager: SessionManager,
+    tmp_path: Path,
+) -> None:
+    session = manager.create_agent_session("window-screenshot", 800, 600)
+
+    capture = manager.screenshot_active_window(session.session_id, tmp_path / "window.png")
+
+    assert capture["target"] == {"kind": "agent-session", "session_id": session.session_id}
+    assert capture["coordinate_space"] == "screenshot-pixels"
+    assert capture["capture_mode"] == "active-window"

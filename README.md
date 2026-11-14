@@ -15,7 +15,8 @@ be selected explicitly.
 ## What it can do
 
 - Create private virtual desktops and launch applications inside them.
-- Observe windows, displays, pointer/focus context, and optional screenshots.
+- Observe windows, displays, pointer/focus context, and capture full-desktop
+  screenshots; the MCP can also capture individual windows directly.
 - Find, inspect, activate, minimize/restore, and place windows; send guarded
   keyboard/text input and coordinate clicks/drags.
 - Inspect and control MPRIS media players.

@@ -54,6 +54,14 @@ class SessionBackend(Protocol):
         overwrite: bool,
     ) -> dict[str, object]: ...
 
+    def screenshot_active_window(
+        self,
+        session: SessionRecord,
+        output: Path,
+        *,
+        overwrite: bool,
+    ) -> dict[str, object]: ...
+
     def launch_application(
         self,
         session: SessionRecord,
@@ -405,6 +413,20 @@ class SessionManager:
     ) -> dict[str, object]:
         record = self._require_running(session_id)
         capture = self.backend.screenshot(record, output, overwrite=overwrite)
+        return capture | {
+            "target": {"kind": "agent-session", "session_id": session_id},
+            "coordinate_space": "screenshot-pixels",
+        }
+
+    def screenshot_active_window(
+        self,
+        session_id: str,
+        output: Path,
+        *,
+        overwrite: bool = False,
+    ) -> dict[str, object]:
+        record = self._require_running(session_id)
+        capture = self.backend.screenshot_active_window(record, output, overwrite=overwrite)
         return capture | {
             "target": {"kind": "agent-session", "session_id": session_id},
             "coordinate_space": "screenshot-pixels",

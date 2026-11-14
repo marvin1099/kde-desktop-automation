@@ -30,6 +30,7 @@ def test_private_environment_does_not_inherit_host_desktop_or_secrets(tmp_path) 
 
     assert env["WAYLAND_DISPLAY"] == "kde-desktop-private"
     assert env["DBUS_SESSION_BUS_ADDRESS"] == "unix:path=/private/bus"
+    assert env["QT_QPA_PLATFORM"] == "wayland"
     assert env["XDG_RUNTIME_DIR"] == str(paths.runtime_dir)
     assert env["HOME"] == str(paths.home_dir)
     assert "DISPLAY" not in env

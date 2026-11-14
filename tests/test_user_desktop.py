@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import socket
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -602,6 +604,28 @@ def test_pointer_position_is_a_read_only_kdotool_query(
     assert commands == [("/usr/bin/kdotool", "getmouselocation")]
 
 
+def test_window_info_query_works_when_called_from_an_asyncio_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    caller_thread = threading.get_ident()
+
+    async def fake_query(window_ids: list[str], *, bus_address: str) -> dict[str, dict[str, Any]]:
+        assert window_ids == [WINDOW_ID]
+        assert bus_address == "unix:path=/run/user/1000/bus"
+        return {WINDOW_ID: {"thread_id": threading.get_ident()}}
+
+    monkeypatch.setattr(user_desktop, "_query_window_info_async", fake_query)
+
+    async def invoke_query() -> dict[str, dict[str, Any]]:
+        return user_desktop._query_window_info(
+            [WINDOW_ID], bus_address="unix:path=/run/user/1000/bus"
+        )
+
+    result = asyncio.run(invoke_query())
+
+    assert result[WINDOW_ID]["thread_id"] != caller_thread
+
+
 def test_live_capabilities_probe_window_service_and_report_focus_routing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -623,6 +647,7 @@ def test_live_capabilities_probe_window_service_and_report_focus_routing(
     assert result["capabilities"]["window.set_geometry"] is True
     assert result["capabilities"]["input.pointer_position"] is True
     assert result["capabilities"]["desktop.observe"] is True
+    assert result["capabilities"]["screenshot.window.capture"] is True
     assert result["capabilities"]["media.players"] is True
     assert result["capabilities"]["media.control"] is True
     assert result["capabilities"]["media.seek_to"] is True
@@ -647,6 +672,7 @@ def test_live_capabilities_report_unavailable_window_metadata_service(
 
     assert result["capabilities"]["window.list"] is False
     assert result["capabilities"]["input.key"] is False
+    assert result["capabilities"]["screenshot.window.capture"] is False
     assert result["window_reason"] == "KWin D-Bus is unavailable."
 
 
@@ -671,3 +697,28 @@ def test_live_screenshot_reports_target_and_common_pixel_coordinate_space(
 
     assert result["target"] == {"kind": "user-desktop"}
     assert result["coordinate_space"] == "screenshot-pixels"
+
+
+def test_live_active_window_screenshot_reports_native_capture_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, _commands = _backend(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        user_desktop,
+        "capture_active_window",
+        lambda output, *, env, overwrite: {
+            "path": str(output),
+            "width": 520,
+            "height": 360,
+            "coordinate_space": "active-window-pixels",
+            "capture_mode": "active-window",
+            "source": "spectacle",
+        },
+    )
+
+    result = backend.screenshot_active_window(tmp_path / "active-window.png")
+
+    assert result["target"] == {"kind": "user-desktop"}
+    assert result["coordinate_space"] == "screenshot-pixels"
+    assert result["capture_mode"] == "active-window"

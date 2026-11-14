@@ -54,6 +54,8 @@ screenshot image. Screenshot-pixel mapping is explicit when a single display is
 captured; composite multi-display mapping is reported as unavailable rather than
 guessed. `kde_window_set_geometry` is the precise KWin frame-placement path, while
 `kde_input_drag` remains a real global pointer gesture for UI interactions.
+`kde_screenshot_window` uses Spectacle's native active-window capture for one
+selected window ID; it activates the window if needed and may change live focus.
 
 Session IDs select a target; they are not per-client authorization tokens. MCP
 clients sharing this server share the Unix user's authority over managed private
@@ -783,6 +785,66 @@ def create_mcp_server(
                     "screenshot_read_failed",
                     "The screenshot was captured but its PNG could not be read for MCP delivery.",
                     details={"reason": str(exc), "output": output},
+                )
+            )
+
+    @server.tool(
+        name="kde_screenshot_window",
+        description=(
+            "Capture one selected window directly with Spectacle's active-window mode, "
+            "not by cropping a desktop screenshot. Activates the window if needed, which "
+            "may change focus on user-desktop. Returns the PNG as an MCP image."
+        ),
+        annotations=ToolAnnotations(readOnlyHint=False, openWorldHint=False),
+        structured_output=False,
+    )
+    def screenshot_window(
+        session: TargetSession,
+        window_id: WindowId,
+        output: str | None = None,
+        overwrite: bool = False,
+    ) -> CallToolResult:
+        """Capture a selected window as image content, optionally saving its PNG."""
+        try:
+            operations = desktop_operations(session)
+            if output is None:
+                with tempfile.TemporaryDirectory(
+                    prefix="kde-desktop-window-shot-"
+                ) as temporary_dir:
+                    screenshot_path = Path(temporary_dir) / "window.png"
+                    data = operations.screenshot_window(window_id, screenshot_path)
+                    image_bytes = screenshot_path.read_bytes()
+                data = data | {"path": None, "image_embedded": True}
+            else:
+                screenshot_path = Path(output).expanduser()
+                data = operations.screenshot_window(
+                    window_id,
+                    screenshot_path,
+                    overwrite=overwrite,
+                )
+                image_bytes = screenshot_path.read_bytes()
+                data = data | {"image_embedded": True}
+            envelope = {"schema_version": "1", "ok": True, "data": data}
+            return CallToolResult(
+                content=[
+                    TextContent(type="text", text=json.dumps(envelope, ensure_ascii=False)),
+                    ImageContent(
+                        type="image",
+                        data=base64.b64encode(image_bytes).decode("ascii"),
+                        mimeType="image/png",
+                    ),
+                ],
+                structuredContent=envelope,
+            )
+        except InteractionError as exc:
+            return _failure(exc)
+        except OSError as exc:
+            return _failure(
+                InteractionError(
+                    "screenshot_read_failed",
+                    "The selected-window screenshot was captured but its PNG could not be "
+                    "read for MCP delivery.",
+                    details={"reason": str(exc), "output": output, "window_id": window_id},
                 )
             )
 

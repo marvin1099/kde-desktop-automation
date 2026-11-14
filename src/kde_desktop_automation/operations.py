@@ -357,6 +357,66 @@ class DesktopOperations:
             self._private_session_id(), output, overwrite=overwrite
         )
 
+    def screenshot_window(
+        self,
+        window_id: str,
+        output: Path,
+        *,
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        """Capture one exact window using Spectacle's native active-window mode."""
+        before = self.window_inspect(window_id)["window"]
+        focus_changed = before.get("active") is not True
+        if focus_changed:
+            activation = self.window_activate(window_id)
+            if activation.get("active_window_verified") is not True:
+                raise InteractionError(
+                    "window_activation_unverified",
+                    "The selected window could not be activated for a window-only screenshot.",
+                    details={"window_id": window_id},
+                )
+
+        capture = self.screenshot_active_window(output, overwrite=overwrite)
+        after = self.window_inspect(window_id)["window"]
+        if after.get("active") is not True:
+            raise InteractionError(
+                "screenshot_target_changed",
+                "The selected window was no longer active after Spectacle captured "
+                "the active window.",
+                details={
+                    "window_id": window_id,
+                    "output": str(output),
+                    "active_after_capture": after.get("active"),
+                },
+            )
+
+        target = capture.get("target")
+        if not isinstance(target, dict):
+            target = {}
+        return capture | {
+            "target": target | {"window_id": after["window_id"]},
+            "window": after,
+            "focus_changed": focus_changed,
+            "target_window_verified": True,
+            "note": (
+                "Spectacle captured the selected active window directly, not a desktop crop. "
+                "The window is activated when needed; this may change live user focus. "
+                "The image includes window decorations."
+            ),
+        }
+
+    def screenshot_active_window(
+        self,
+        output: Path,
+        *,
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        if self._user_desktop is not None:
+            return self._user_desktop.screenshot_active_window(output, overwrite=overwrite)
+        return self._private_manager().screenshot_active_window(
+            self._private_session_id(), output, overwrite=overwrite
+        )
+
     def capabilities(self) -> dict[str, Any]:
         capabilities = _media_capabilities() | _audio_capabilities(
             live_target=self._user_desktop is not None

@@ -394,7 +394,11 @@ persisted CLI default only. This explicit per-call selector prevents accidental
 cross-session use but is not an authorization boundary. Existing MCP callers
 that omitted `session` must be updated; CLI default-session behavior is unchanged.
 
-`kde_screenshot` returns target/session metadata and PNG image content. Session
+`kde_screenshot` captures the full selected desktop. `kde_screenshot_window`
+captures one exact window with Spectacle's native active-window mode (not a crop),
+activating it first if necessary. That can change focus on `user-desktop`; the
+result includes the selected window and reports whether focus was changed.
+Both tools return target/session metadata and PNG image content. Session
 creation/launch/stop tools operate only on managed private sessions; launch
 takes an argv array and never evaluates a shell command. MCP clients sharing
 the server still share the Unix user's authority to list, launch, and stop

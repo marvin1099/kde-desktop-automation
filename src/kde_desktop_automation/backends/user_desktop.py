@@ -7,6 +7,7 @@ import re
 import shutil
 import stat
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
@@ -32,7 +33,10 @@ from kde_desktop_automation.backends.kwin_input import (
     validate_drag_steps,
     validate_drag_timing,
 )
-from kde_desktop_automation.backends.screenshots import capture_fullscreen
+from kde_desktop_automation.backends.screenshots import (
+    capture_active_window,
+    capture_fullscreen,
+)
 from kde_desktop_automation.errors import InteractionError
 from kde_desktop_automation.process import require_executable, require_success, run_command
 from kde_desktop_automation.window_selection import find_one_window
@@ -513,6 +517,19 @@ class UserDesktopBackend:
             ),
         }
 
+    def screenshot_active_window(
+        self,
+        output: Path,
+        *,
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        capture = capture_active_window(output, env=self.environ, overwrite=overwrite)
+        return capture | {
+            "target": {"kind": "user-desktop"},
+            "coordinate_space": "screenshot-pixels",
+            "note": "Spectacle captures the active window directly, including its decorations.",
+        }
+
     def capabilities(self) -> dict[str, Any]:
         version: int | None
         input_reason: str | None = None
@@ -547,6 +564,8 @@ class UserDesktopBackend:
                 "input.pointer_position": shutil.which("kdotool") is not None,
                 "display.inspect": shutil.which("wlpdisplays") is not None,
                 "screenshot.capture": shutil.which("spectacle") is not None,
+                "screenshot.window.capture": window_available
+                and shutil.which("spectacle") is not None,
                 "input.key": key_available,
                 "input.text": key_available,
                 "input.click": click_available,
@@ -721,7 +740,19 @@ def _query_window_info(
     *,
     bus_address: str,
 ) -> dict[str, dict[str, Any]]:
-    return asyncio.run(_query_window_info_async(window_ids, bus_address=bus_address))
+    def query() -> dict[str, dict[str, Any]]:
+        return asyncio.run(_query_window_info_async(window_ids, bus_address=bus_address))
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return query()
+
+    # FastMCP invokes synchronous tool callbacks on its event-loop thread. Run
+    # the D-Bus coroutine on a separate loop so live window queries also work
+    # when the backend is called through MCP.
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="kwin-dbus") as executor:
+        return executor.submit(query).result()
 
 
 async def _query_window_info_async(
