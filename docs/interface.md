@@ -555,9 +555,12 @@ The current milestone uses window metadata, pointer readback, screenshots, and
 coordinates. Capability reports expose the current boundary. AT-SPI2 is
 installed and its registry is running on the probed user session, but that
 probe found no AT-SPI application root that could be matched to a current KWin
-window. A live registry alone is not evidence of usable controls, so semantic
-tools remain unavailable. Any eventual accessibility provider must be a
-separate optional, target-scoped adapter:
+window. A controlled GTK 4 test app in a private KWin session did expose a
+window and named controls after explicitly enabling GTK's AT-SPI backend and
+starting that session's registry. This proves one opt-in path, not general app
+coverage or automatic private-session readiness. Semantic tools remain
+unavailable. Any eventual accessibility provider must be a separate optional,
+target-scoped adapter:
 
 ```json
 {

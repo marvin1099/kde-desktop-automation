@@ -99,6 +99,18 @@ a tree. No software was installed, no accessibility setting was changed, and
 no semantic action was attempted. Do not advertise an accessibility capability
 or expose semantic controls on the strength of a running bus alone.
 
+A follow-up proof-of-concept used a GTK 4 test window in a fresh private KWin
+session with `GTK_A11Y=atspi`. The desktop tool reported its UUID, app ID, PID,
+and title; AT-SPI returned an application root with the same PID and a top-level
+frame with the same title. The tree exposed a named button with a `click` action
+and a labeled text field. The private session started an `org.a11y.Bus`, but its
+registry did not start automatically; the test explicitly launched
+`at-spi2-registryd` inside that private session before inspecting the tree. The
+session was stopped after the test, and the button action was not invoked. This
+proves a controlled GTK path can work when the app opts into the backend and the
+registry is available; it does not demonstrate general application coverage or
+automatic provider readiness for private sessions.
+
 Control discovery is a possible future feature, not a committed implementation
 plan. The current interface exposes windows, screenshots, and coordinate input,
 but does not identify buttons, fields, menu items, or other controls within a
