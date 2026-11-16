@@ -145,3 +145,47 @@ def test_private_minimize_operation_reports_the_read_back_state(
         "window": {"window_id": WINDOW_ID, "minimized": requested},
         "minimized_verified": True,
     }
+
+
+@pytest.mark.parametrize("operation", ["activate", "minimize"])
+def test_private_window_closed_during_action_readback_is_stale_target(
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    class FakeClient:
+        def __init__(self, _socket_path: Path) -> None:
+            self.present = True
+            self.minimized = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            pass
+
+        def windows(self):
+            return (
+                [{"window_id": WINDOW_ID, "minimized": self.minimized, "active": False}]
+                if self.present
+                else []
+            )
+
+        def activate(self, window_id: str) -> None:
+            assert window_id == WINDOW_ID
+            self.present = False
+
+        def set_minimized(self, window_id: str, minimized: bool) -> None:
+            assert window_id == WINDOW_ID
+            self.minimized = minimized
+            self.present = False
+
+    monkeypatch.setattr(kwin_window_management, "KWinWindowManagementClient", FakeClient)
+
+    with pytest.raises(InteractionError) as error:
+        if operation == "activate":
+            kwin_window_management.activate_window(Path("/fake/socket"), WINDOW_ID)
+        else:
+            kwin_window_management.set_minimized_window(Path("/fake/socket"), WINDOW_ID, True)
+
+    assert error.value.code == "stale_target"
+    assert error.value.details["phase"] in {"activation_readback", "minimize_readback"}

@@ -649,9 +649,16 @@ def activate_window(socket_path: Path, window_id: str) -> dict[str, Any]:
             )
         client.activate(normalized_id)
         after = {item["window_id"]: item for item in client.windows()}
+        activated_window = after.get(normalized_id)
+        if activated_window is None:
+            raise InteractionError(
+                "stale_target",
+                "The selected window closed while KWin was activating it.",
+                details={"window_id": normalized_id, "phase": "activation_readback"},
+            )
         return {
-            "window": after.get(normalized_id, window),
-            "active_verified": bool(after.get(normalized_id, {}).get("active")),
+            "window": activated_window,
+            "active_verified": bool(activated_window.get("active")),
         }
 
 
@@ -672,7 +679,13 @@ def set_minimized_window(
             )
         client.set_minimized(normalized_id, minimized)
         after = {item["window_id"]: item for item in client.windows()}
-        result_window = after.get(normalized_id, window)
+        result_window = after.get(normalized_id)
+        if result_window is None:
+            raise InteractionError(
+                "stale_target",
+                "The selected window closed while KWin was changing its minimized state.",
+                details={"window_id": normalized_id, "phase": "minimize_readback"},
+            )
         return {
             "window": result_window,
             "minimized_verified": result_window.get("minimized") is minimized,

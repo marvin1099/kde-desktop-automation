@@ -156,7 +156,15 @@ connecting a phone/client.
 substring. It returns candidates as an error if more than one window matches;
 it never chooses silently. Inspection returns title, app ID, fullscreen,
 minimized/maximized and active state, geometry, and a UUID scoped to that
-session. UUIDs become stale when their window closes. The private KWin protocol
+session. A UUID is only valid for the selected target session and while that
+window exists; never reuse one with another session or after a `stale_target`
+error. Before a delayed action, refresh the list/inspection. Window-targeted
+actions also accept optional `--expect-app-id` and `--expect-pid` preconditions;
+the live window identity is re-inspected before dispatch, and a mismatch fails
+with `stale_target`. These checks guard identity, not geometry/state, and cannot
+make the check and action atomic. MCP exposes the same fields as
+`expected_app_id` and `expected_pid`.
+The private KWin protocol
 now supports the same window list/find/inspect/activate flow when the session
 advertises protocol v13 or newer; capabilities are recorded per session.
 `window set-minimized WINDOW_ID minimized|restored` sets and verifies the
@@ -227,6 +235,9 @@ kde-desktop --session user-desktop window set-fullscreen WINDOW_ID fullscreen --
 kde-desktop --session user-desktop window set-fullscreen WINDOW_ID restored --json
 kde-desktop --session user-desktop window set-maximized WINDOW_ID maximized --json
 kde-desktop --session user-desktop window set-maximized WINDOW_ID restored --json
+# Optional identity guards use values returned by window list/find/inspect.
+kde-desktop --session user-desktop window set-maximized WINDOW_ID maximized \
+  --expect-app-id org.kde.kate --expect-pid 1234 --json
 ```
 
 The generic drag path was exercised in a hidden session by dragging a test file

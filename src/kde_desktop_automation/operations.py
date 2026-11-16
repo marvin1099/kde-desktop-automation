@@ -103,26 +103,73 @@ class DesktopOperations:
             return self._user_desktop.inspect_window(window_id)
         return self._private_manager().inspect_window(self._private_session_id(), window_id)
 
-    def window_activate(self, window_id: str) -> dict[str, Any]:
+    def window_activate(
+        self,
+        window_id: str,
+        *,
+        expected_app_id: str | None = None,
+        expected_pid: int | None = None,
+    ) -> dict[str, Any]:
+        self._check_window_precondition(
+            window_id,
+            expected_app_id=expected_app_id,
+            expected_pid=expected_pid,
+        )
         if self._user_desktop is not None:
             return self._user_desktop.activate_window(window_id)
         return self._private_manager().activate_window(self._private_session_id(), window_id)
 
-    def window_set_minimized(self, window_id: str, minimized: bool) -> dict[str, Any]:
+    def window_set_minimized(
+        self,
+        window_id: str,
+        minimized: bool,
+        *,
+        expected_app_id: str | None = None,
+        expected_pid: int | None = None,
+    ) -> dict[str, Any]:
+        self._check_window_precondition(
+            window_id,
+            expected_app_id=expected_app_id,
+            expected_pid=expected_pid,
+        )
         if self._user_desktop is not None:
             return self._user_desktop.set_window_minimized(window_id, minimized)
         return self._private_manager().set_window_minimized(
             self._private_session_id(), window_id, minimized
         )
 
-    def window_set_fullscreen(self, window_id: str, fullscreen: bool) -> dict[str, Any]:
+    def window_set_fullscreen(
+        self,
+        window_id: str,
+        fullscreen: bool,
+        *,
+        expected_app_id: str | None = None,
+        expected_pid: int | None = None,
+    ) -> dict[str, Any]:
+        self._check_window_precondition(
+            window_id,
+            expected_app_id=expected_app_id,
+            expected_pid=expected_pid,
+        )
         if self._user_desktop is not None:
             return self._user_desktop.set_window_fullscreen(window_id, fullscreen)
         return self._private_manager().set_window_fullscreen(
             self._private_session_id(), window_id, fullscreen
         )
 
-    def window_set_maximized(self, window_id: str, maximized: bool) -> dict[str, Any]:
+    def window_set_maximized(
+        self,
+        window_id: str,
+        maximized: bool,
+        *,
+        expected_app_id: str | None = None,
+        expected_pid: int | None = None,
+    ) -> dict[str, Any]:
+        self._check_window_precondition(
+            window_id,
+            expected_app_id=expected_app_id,
+            expected_pid=expected_pid,
+        )
         if self._user_desktop is not None:
             return self._user_desktop.set_window_maximized(window_id, maximized)
         return self._private_manager().set_window_maximized(
@@ -136,7 +183,15 @@ class DesktopOperations:
         y: int,
         width: int,
         height: int,
+        *,
+        expected_app_id: str | None = None,
+        expected_pid: int | None = None,
     ) -> dict[str, Any]:
+        self._check_window_precondition(
+            window_id,
+            expected_app_id=expected_app_id,
+            expected_pid=expected_pid,
+        )
         if self._user_desktop is not None:
             return self._user_desktop.set_window_geometry(window_id, x, y, width, height)
         return self._private_manager().set_window_geometry(
@@ -271,14 +326,38 @@ class DesktopOperations:
                 ) from None
             time.sleep(min(0.2, remaining))
 
-    def input_key(self, window_id: str, chord: str) -> dict[str, Any]:
+    def input_key(
+        self,
+        window_id: str,
+        chord: str,
+        *,
+        expected_app_id: str | None = None,
+        expected_pid: int | None = None,
+    ) -> dict[str, Any]:
+        self._check_window_precondition(
+            window_id,
+            expected_app_id=expected_app_id,
+            expected_pid=expected_pid,
+        )
         if self._user_desktop is not None:
             return self._user_desktop.send_key(window_id, chord)
         return self._private_manager().send_key_to_window(
             self._private_session_id(), window_id, chord
         )
 
-    def input_type(self, window_id: str, text: str) -> dict[str, Any]:
+    def input_type(
+        self,
+        window_id: str,
+        text: str,
+        *,
+        expected_app_id: str | None = None,
+        expected_pid: int | None = None,
+    ) -> dict[str, Any]:
+        self._check_window_precondition(
+            window_id,
+            expected_app_id=expected_app_id,
+            expected_pid=expected_pid,
+        )
         if self._user_desktop is not None:
             return self._user_desktop.send_text(window_id, text)
         return self._private_manager().send_text_to_window(
@@ -292,7 +371,14 @@ class DesktopOperations:
         y: float,
         *,
         button: str = "left",
+        expected_app_id: str | None = None,
+        expected_pid: int | None = None,
     ) -> dict[str, Any]:
+        self._check_window_precondition(
+            window_id,
+            expected_app_id=expected_app_id,
+            expected_pid=expected_pid,
+        )
         if self._user_desktop is not None:
             return self._user_desktop.click_window(window_id, x, y, button=button)
         return self._private_manager().click_window(
@@ -377,9 +463,17 @@ class DesktopOperations:
         output: Path,
         *,
         overwrite: bool = False,
+        expected_app_id: str | None = None,
+        expected_pid: int | None = None,
     ) -> dict[str, Any]:
         """Capture an exact window directly without activating it."""
         before = self.window_inspect(window_id)["window"]
+        self._check_window_precondition(
+            window_id,
+            expected_app_id=expected_app_id,
+            expected_pid=expected_pid,
+            observed_window=before,
+        )
         if self._user_desktop is not None:
             capture = self._user_desktop.screenshot_window(
                 window_id,
@@ -446,6 +540,57 @@ class DesktopOperations:
                 "player availability is checked per call",
             ],
         }
+
+    def _check_window_precondition(
+        self,
+        window_id: str,
+        *,
+        expected_app_id: str | None = None,
+        expected_pid: int | None = None,
+        observed_window: dict[str, Any] | None = None,
+    ) -> None:
+        if expected_app_id is None and expected_pid is None:
+            return
+        if expected_app_id is not None and (
+            not isinstance(expected_app_id, str)
+            or not expected_app_id
+            or len(expected_app_id) > 512
+        ):
+            raise InteractionError(
+                "invalid_window_precondition",
+                "Expected app ID must be a non-empty string of at most 512 characters.",
+                details={"expected_app_id": expected_app_id},
+            )
+        if expected_pid is not None and (
+            isinstance(expected_pid, bool) or not isinstance(expected_pid, int) or expected_pid <= 0
+        ):
+            raise InteractionError(
+                "invalid_window_precondition",
+                "Expected PID must be a positive integer.",
+                details={"expected_pid": expected_pid},
+            )
+
+        current = observed_window or self.window_inspect(window_id)["window"]
+        observed = {"app_id": current.get("app_id"), "pid": current.get("pid")}
+        expected = {"app_id": expected_app_id, "pid": expected_pid}
+        mismatches = {
+            field: {"expected": value, "observed": observed[field]}
+            for field, value in expected.items()
+            if value is not None and observed[field] != value
+        }
+        if mismatches:
+            raise InteractionError(
+                "stale_target",
+                "The selected window no longer matches the supplied identity precondition.",
+                details={
+                    "window_id": current.get("window_id", window_id),
+                    "expected_identity": {
+                        key: value for key, value in expected.items() if value is not None
+                    },
+                    "observed_identity": observed,
+                    "mismatches": mismatches,
+                },
+            )
 
     def media_players(self) -> dict[str, Any]:
         return self._media_backend().list_players(target=self._target())

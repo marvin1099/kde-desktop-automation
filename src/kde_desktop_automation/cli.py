@@ -342,12 +342,24 @@ def screenshot_window(
     ),
     output: Path = typer.Option(..., "--output", "-o", help="Destination PNG path."),
     overwrite: bool = typer.Option(False, "--overwrite", help="Replace an existing output file."),
+    expected_app_id: str | None = typer.Option(
+        None, "--expect-app-id", help="Fail if the current window app ID differs."
+    ),
+    expected_pid: int | None = typer.Option(
+        None, "--expect-pid", min=1, help="Fail if the current window process ID differs."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Capture one selected window directly, without activating it."""
     _run(
         lambda: (
-            _operations(ctx).screenshot_window(window_id, output, overwrite=overwrite),
+            _operations(ctx).screenshot_window(
+                window_id,
+                output,
+                overwrite=overwrite,
+                expected_app_id=expected_app_id,
+                expected_pid=expected_pid,
+            ),
             [],
         ),
         json_output=json_output,
@@ -360,10 +372,26 @@ def activate_window(
     window_id: str = typer.Argument(
         ..., help="UUID from window list/find for the selected session."
     ),
+    expected_app_id: str | None = typer.Option(
+        None, "--expect-app-id", help="Fail if the current window app ID differs."
+    ),
+    expected_pid: int | None = typer.Option(
+        None, "--expect-pid", min=1, help="Fail if the current window process ID differs."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Activate one window and report whether KWin confirmed it became active."""
-    _run(lambda: (_operations(ctx).window_activate(window_id), []), json_output=json_output)
+    _run(
+        lambda: (
+            _operations(ctx).window_activate(
+                window_id,
+                expected_app_id=expected_app_id,
+                expected_pid=expected_pid,
+            ),
+            [],
+        ),
+        json_output=json_output,
+    )
 
 
 @window_app.command("set-minimized")
@@ -373,11 +401,25 @@ def set_window_minimized(
         ..., help="UUID from window list/find for the selected session."
     ),
     state: WindowMinimizedState = typer.Argument(..., help="Desired state: minimized or restored."),
+    expected_app_id: str | None = typer.Option(
+        None, "--expect-app-id", help="Fail if the current window app ID differs."
+    ),
+    expected_pid: int | None = typer.Option(
+        None, "--expect-pid", min=1, help="Fail if the current window process ID differs."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Set and verify a window's minimized state; restoring reverses minimization."""
     _run(
-        lambda: (_operations(ctx).window_set_minimized(window_id, state == "minimized"), []),
+        lambda: (
+            _operations(ctx).window_set_minimized(
+                window_id,
+                state == "minimized",
+                expected_app_id=expected_app_id,
+                expected_pid=expected_pid,
+            ),
+            [],
+        ),
         json_output=json_output,
     )
 
@@ -391,12 +433,23 @@ def set_window_fullscreen(
     state: WindowFullscreenState = typer.Argument(
         ..., help="Desired state: fullscreen or restored."
     ),
+    expected_app_id: str | None = typer.Option(
+        None, "--expect-app-id", help="Fail if the current window app ID differs."
+    ),
+    expected_pid: int | None = typer.Option(
+        None, "--expect-pid", min=1, help="Fail if the current window process ID differs."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Set or restore a window's fullscreen state and verify KWin's readback."""
     _run(
         lambda: (
-            _operations(ctx).window_set_fullscreen(window_id, state == "fullscreen"),
+            _operations(ctx).window_set_fullscreen(
+                window_id,
+                state == "fullscreen",
+                expected_app_id=expected_app_id,
+                expected_pid=expected_pid,
+            ),
             [],
         ),
         json_output=json_output,
@@ -410,12 +463,23 @@ def set_window_maximized(
         ..., help="UUID from window list/find for the selected session."
     ),
     state: WindowMaximizedState = typer.Argument(..., help="Desired state: maximized or restored."),
+    expected_app_id: str | None = typer.Option(
+        None, "--expect-app-id", help="Fail if the current window app ID differs."
+    ),
+    expected_pid: int | None = typer.Option(
+        None, "--expect-pid", min=1, help="Fail if the current window process ID differs."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Set or restore a window's maximized state and verify KWin's readback."""
     _run(
         lambda: (
-            _operations(ctx).window_set_maximized(window_id, state == "maximized"),
+            _operations(ctx).window_set_maximized(
+                window_id,
+                state == "maximized",
+                expected_app_id=expected_app_id,
+                expected_pid=expected_pid,
+            ),
             [],
         ),
         json_output=json_output,
@@ -432,11 +496,28 @@ def set_window_geometry(
     y: int = typer.Argument(..., help="Requested KWin frame y position in logical desktop pixels."),
     width: int = typer.Argument(..., help="Requested frame width in logical desktop pixels."),
     height: int = typer.Argument(..., help="Requested frame height in logical desktop pixels."),
+    expected_app_id: str | None = typer.Option(
+        None, "--expect-app-id", help="Fail if the current window app ID differs."
+    ),
+    expected_pid: int | None = typer.Option(
+        None, "--expect-pid", min=1, help="Fail if the current window process ID differs."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Set an explicit KWin frame rectangle and verify its effective geometry."""
     _run(
-        lambda: (_operations(ctx).window_set_geometry(window_id, x, y, width, height), []),
+        lambda: (
+            _operations(ctx).window_set_geometry(
+                window_id,
+                x,
+                y,
+                width,
+                height,
+                expected_app_id=expected_app_id,
+                expected_pid=expected_pid,
+            ),
+            [],
+        ),
         json_output=json_output,
     )
 
@@ -486,10 +567,27 @@ def input_key(
     ctx: Context,
     window_id: str = typer.Argument(..., help="Target window UUID from window list/find."),
     chord: str = typer.Argument(..., help="Key or chord, for example CTRL+END or CTRL+S."),
+    expected_app_id: str | None = typer.Option(
+        None, "--expect-app-id", help="Fail if the current window app ID differs."
+    ),
+    expected_pid: int | None = typer.Option(
+        None, "--expect-pid", min=1, help="Fail if the current window process ID differs."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Submit a key chord to the named window, which must already be active."""
-    _run(lambda: (_operations(ctx).input_key(window_id, chord), []), json_output=json_output)
+    _run(
+        lambda: (
+            _operations(ctx).input_key(
+                window_id,
+                chord,
+                expected_app_id=expected_app_id,
+                expected_pid=expected_pid,
+            ),
+            [],
+        ),
+        json_output=json_output,
+    )
 
 
 @input_app.command("type")
@@ -497,10 +595,27 @@ def input_type(
     ctx: Context,
     window_id: str = typer.Argument(..., help="Target window UUID from window list/find."),
     text: str = typer.Argument(..., help="Literal text; use shell quoting for newlines."),
+    expected_app_id: str | None = typer.Option(
+        None, "--expect-app-id", help="Fail if the current window app ID differs."
+    ),
+    expected_pid: int | None = typer.Option(
+        None, "--expect-pid", min=1, help="Fail if the current window process ID differs."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Submit text to the named window, which must already be active."""
-    _run(lambda: (_operations(ctx).input_type(window_id, text), []), json_output=json_output)
+    _run(
+        lambda: (
+            _operations(ctx).input_type(
+                window_id,
+                text,
+                expected_app_id=expected_app_id,
+                expected_pid=expected_pid,
+            ),
+            [],
+        ),
+        json_output=json_output,
+    )
 
 
 @input_app.command("click")
@@ -510,11 +625,27 @@ def input_click(
     x: float = typer.Argument(..., help="Normalized horizontal window coordinate from 0 to 1."),
     y: float = typer.Argument(..., help="Normalized vertical window coordinate from 0 to 1."),
     button: str = typer.Option("left", "--button", help="Mouse button: left, middle, or right."),
+    expected_app_id: str | None = typer.Option(
+        None, "--expect-app-id", help="Fail if the current window app ID differs."
+    ),
+    expected_pid: int | None = typer.Option(
+        None, "--expect-pid", min=1, help="Fail if the current window process ID differs."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Click a normalized window-relative point; the named window must be active."""
     _run(
-        lambda: (_operations(ctx).input_click(window_id, x, y, button=button), []),
+        lambda: (
+            _operations(ctx).input_click(
+                window_id,
+                x,
+                y,
+                button=button,
+                expected_app_id=expected_app_id,
+                expected_pid=expected_pid,
+            ),
+            [],
+        ),
         json_output=json_output,
     )
 
@@ -879,6 +1010,12 @@ def screenshot_user_window(
     window_id: str = typer.Argument(..., help="UUID from user-desktop window list/find."),
     output: Path = typer.Option(..., "--output", "-o", help="Destination PNG path."),
     overwrite: bool = typer.Option(False, "--overwrite", help="Replace an existing output file."),
+    expected_app_id: str | None = typer.Option(
+        None, "--expect-app-id", help="Fail if the current window app ID differs."
+    ),
+    expected_pid: int | None = typer.Option(
+        None, "--expect-pid", min=1, help="Fail if the current window process ID differs."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Capture one live window directly through KWin without activating it."""
@@ -888,6 +1025,8 @@ def screenshot_user_window(
                 window_id,
                 output,
                 overwrite=overwrite,
+                expected_app_id=expected_app_id,
+                expected_pid=expected_pid,
             ),
             [],
         ),
@@ -898,11 +1037,24 @@ def screenshot_user_window(
 @user_window_app.command("activate")
 def activate_user_window(
     window_id: str = typer.Argument(..., help="UUID from user-desktop window list/find."),
+    expected_app_id: str | None = typer.Option(
+        None, "--expect-app-id", help="Fail if the current window app ID differs."
+    ),
+    expected_pid: int | None = typer.Option(
+        None, "--expect-pid", min=1, help="Fail if the current window process ID differs."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Explicitly activate a live user window and verify KWin reports it active."""
     _run(
-        lambda: (_user_desktop_operations().window_activate(window_id), []),
+        lambda: (
+            _user_desktop_operations().window_activate(
+                window_id,
+                expected_app_id=expected_app_id,
+                expected_pid=expected_pid,
+            ),
+            [],
+        ),
         json_output=json_output,
     )
 
@@ -911,12 +1063,23 @@ def activate_user_window(
 def set_user_window_minimized(
     window_id: str = typer.Argument(..., help="UUID from user-desktop window list/find."),
     state: WindowMinimizedState = typer.Argument(..., help="Desired state: minimized or restored."),
+    expected_app_id: str | None = typer.Option(
+        None, "--expect-app-id", help="Fail if the current window app ID differs."
+    ),
+    expected_pid: int | None = typer.Option(
+        None, "--expect-pid", min=1, help="Fail if the current window process ID differs."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Set and verify a live window's minimized state; this may change user focus."""
     _run(
         lambda: (
-            _user_desktop_operations().window_set_minimized(window_id, state == "minimized"),
+            _user_desktop_operations().window_set_minimized(
+                window_id,
+                state == "minimized",
+                expected_app_id=expected_app_id,
+                expected_pid=expected_pid,
+            ),
             [],
         ),
         json_output=json_output,
@@ -929,12 +1092,23 @@ def set_user_window_fullscreen(
     state: WindowFullscreenState = typer.Argument(
         ..., help="Desired state: fullscreen or restored."
     ),
+    expected_app_id: str | None = typer.Option(
+        None, "--expect-app-id", help="Fail if the current window app ID differs."
+    ),
+    expected_pid: int | None = typer.Option(
+        None, "--expect-pid", min=1, help="Fail if the current window process ID differs."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Set or restore fullscreen on a live window; this affects the real workspace."""
     _run(
         lambda: (
-            _user_desktop_operations().window_set_fullscreen(window_id, state == "fullscreen"),
+            _user_desktop_operations().window_set_fullscreen(
+                window_id,
+                state == "fullscreen",
+                expected_app_id=expected_app_id,
+                expected_pid=expected_pid,
+            ),
             [],
         ),
         json_output=json_output,
@@ -945,12 +1119,23 @@ def set_user_window_fullscreen(
 def set_user_window_maximized(
     window_id: str = typer.Argument(..., help="UUID from user-desktop window list/find."),
     state: WindowMaximizedState = typer.Argument(..., help="Desired state: maximized or restored."),
+    expected_app_id: str | None = typer.Option(
+        None, "--expect-app-id", help="Fail if the current window app ID differs."
+    ),
+    expected_pid: int | None = typer.Option(
+        None, "--expect-pid", min=1, help="Fail if the current window process ID differs."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Set or restore maximization on a live window; this affects the real workspace."""
     _run(
         lambda: (
-            _user_desktop_operations().window_set_maximized(window_id, state == "maximized"),
+            _user_desktop_operations().window_set_maximized(
+                window_id,
+                state == "maximized",
+                expected_app_id=expected_app_id,
+                expected_pid=expected_pid,
+            ),
             [],
         ),
         json_output=json_output,
@@ -964,12 +1149,26 @@ def set_user_window_geometry(
     y: int = typer.Argument(..., help="Requested KWin frame y position in logical desktop pixels."),
     width: int = typer.Argument(..., help="Requested frame width in logical desktop pixels."),
     height: int = typer.Argument(..., help="Requested frame height in logical desktop pixels."),
+    expected_app_id: str | None = typer.Option(
+        None, "--expect-app-id", help="Fail if the current window app ID differs."
+    ),
+    expected_pid: int | None = typer.Option(
+        None, "--expect-pid", min=1, help="Fail if the current window process ID differs."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Set and verify a live window's frame rectangle without intentionally changing focus."""
     _run(
         lambda: (
-            _user_desktop_operations().window_set_geometry(window_id, x, y, width, height),
+            _user_desktop_operations().window_set_geometry(
+                window_id,
+                x,
+                y,
+                width,
+                height,
+                expected_app_id=expected_app_id,
+                expected_pid=expected_pid,
+            ),
             [],
         ),
         json_output=json_output,
@@ -996,11 +1195,25 @@ def screenshot_user_desktop(
 def send_user_key(
     window_id: str = typer.Argument(..., help="Active window UUID from user-desktop window list."),
     chord: str = typer.Argument(..., help="Key or chord, for example CTRL+END or CTRL+S."),
+    expected_app_id: str | None = typer.Option(
+        None, "--expect-app-id", help="Fail if the current window app ID differs."
+    ),
+    expected_pid: int | None = typer.Option(
+        None, "--expect-pid", min=1, help="Fail if the current window process ID differs."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Submit a key chord only if the named window is already active."""
     _run(
-        lambda: (_user_desktop_operations().input_key(window_id, chord), []),
+        lambda: (
+            _user_desktop_operations().input_key(
+                window_id,
+                chord,
+                expected_app_id=expected_app_id,
+                expected_pid=expected_pid,
+            ),
+            [],
+        ),
         json_output=json_output,
     )
 
@@ -1009,11 +1222,25 @@ def send_user_key(
 def type_user_text(
     window_id: str = typer.Argument(..., help="Active window UUID from user-desktop window list."),
     text: str = typer.Argument(..., help="Literal text; use shell quoting for newlines."),
+    expected_app_id: str | None = typer.Option(
+        None, "--expect-app-id", help="Fail if the current window app ID differs."
+    ),
+    expected_pid: int | None = typer.Option(
+        None, "--expect-pid", min=1, help="Fail if the current window process ID differs."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Submit literal text only if the named window is already active."""
     _run(
-        lambda: (_user_desktop_operations().input_type(window_id, text), []),
+        lambda: (
+            _user_desktop_operations().input_type(
+                window_id,
+                text,
+                expected_app_id=expected_app_id,
+                expected_pid=expected_pid,
+            ),
+            [],
+        ),
         json_output=json_output,
     )
 
@@ -1023,11 +1250,26 @@ def click_user_window(
     window_id: str = typer.Argument(..., help="Active window UUID from user-desktop window list."),
     x: float = typer.Argument(..., help="Normalized horizontal window coordinate from 0 to 1."),
     y: float = typer.Argument(..., help="Normalized vertical window coordinate from 0 to 1."),
+    expected_app_id: str | None = typer.Option(
+        None, "--expect-app-id", help="Fail if the current window app ID differs."
+    ),
+    expected_pid: int | None = typer.Option(
+        None, "--expect-pid", min=1, help="Fail if the current window process ID differs."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Click a normalized point in the named window, which must already be active."""
     _run(
-        lambda: (_user_desktop_operations().input_click(window_id, x, y), []),
+        lambda: (
+            _user_desktop_operations().input_click(
+                window_id,
+                x,
+                y,
+                expected_app_id=expected_app_id,
+                expected_pid=expected_pid,
+            ),
+            [],
+        ),
         json_output=json_output,
     )
 

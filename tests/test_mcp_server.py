@@ -32,23 +32,41 @@ class FakeOperations:
             )
         return {"target": {"kind": self.session}}
 
-    def window_set_minimized(self, window_id: str, minimized: bool) -> dict[str, Any]:
+    def window_set_minimized(
+        self,
+        window_id: str,
+        minimized: bool,
+        **_preconditions: Any,
+    ) -> dict[str, Any]:
         return {
             "target": {"kind": self.session, "window_id": window_id},
             "minimized": minimized,
         }
 
-    def window_set_fullscreen(self, window_id: str, fullscreen: bool) -> dict[str, Any]:
+    def window_set_fullscreen(
+        self,
+        window_id: str,
+        fullscreen: bool,
+        **_preconditions: Any,
+    ) -> dict[str, Any]:
         return {
             "target": {"kind": self.session, "window_id": window_id},
             "fullscreen": fullscreen,
         }
 
-    def window_set_maximized(self, window_id: str, maximized: bool) -> dict[str, Any]:
-        return {
+    def window_set_maximized(
+        self,
+        window_id: str,
+        maximized: bool,
+        **preconditions: Any,
+    ) -> dict[str, Any]:
+        result = {
             "target": {"kind": self.session, "window_id": window_id},
             "maximized": maximized,
         }
+        if preconditions:
+            result["preconditions"] = preconditions
+        return result
 
     def window_set_geometry(
         self,
@@ -215,6 +233,8 @@ class FakeOperations:
         output: Path,
         *,
         overwrite: bool = False,
+        expected_app_id: str | None = None,
+        expected_pid: int | None = None,
     ) -> dict[str, Any]:
         del overwrite
         output.write_bytes(self.screenshot_png)
@@ -225,6 +245,8 @@ class FakeOperations:
             "height": 1,
             "capture_mode": "window",
             "target_window_verified": True,
+            "expected_app_id": expected_app_id,
+            "expected_pid": expected_pid,
         }
 
 
@@ -379,6 +401,13 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
     assert fullscreen_tool.inputSchema["properties"]["fullscreen"]["type"] == "boolean"
     maximized_tool = next(tool for tool in tools if tool.name == "kde_window_set_maximized")
     assert maximized_tool.inputSchema["properties"]["maximized"]["type"] == "boolean"
+    assert maximized_tool.inputSchema["properties"]["expected_app_id"]["anyOf"][0]["minLength"] == 1
+    assert (
+        maximized_tool.inputSchema["properties"]["expected_pid"]["anyOf"][0]["exclusiveMinimum"]
+        == 0
+    )
+    assert "expected_app_id" not in maximized_tool.inputSchema.get("required", [])
+    assert "expected_pid" not in maximized_tool.inputSchema.get("required", [])
     geometry_tool = next(tool for tool in tools if tool.name == "kde_window_set_geometry")
     assert geometry_tool.inputSchema["properties"]["width"]["minimum"] == 1
     assert geometry_tool.inputSchema["properties"]["width"]["maximum"] == 32_768
@@ -556,6 +585,32 @@ def test_mcp_fullscreen_and_maximize_tools_use_explicit_target_and_state() -> No
     assert maximized.isError is False
     assert maximized.structuredContent["data"]["maximized"] is False
     assert FakeOperations.selected_sessions == [session_id, session_id]
+
+
+def test_mcp_window_state_tool_forwards_identity_preconditions() -> None:
+    server = _server()
+    session_id = "agent-123456789abc"
+
+    result = asyncio.run(
+        server.call_tool(
+            "kde_window_set_maximized",
+            {
+                "session": session_id,
+                "window_id": "window-uuid",
+                "maximized": True,
+                "expected_app_id": "org.kde.kate",
+                "expected_pid": 1234,
+            },
+        )
+    )
+
+    assert isinstance(result, CallToolResult)
+    assert result.isError is False
+    assert result.structuredContent["data"]["preconditions"] == {
+        "expected_app_id": "org.kde.kate",
+        "expected_pid": 1234,
+    }
+    assert FakeOperations.selected_sessions == [session_id]
 
 
 def test_mcp_geometry_and_pointer_position_are_generic_explicit_tools() -> None:

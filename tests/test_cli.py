@@ -216,19 +216,19 @@ def test_global_pointer_and_window_state_cli_use_explicit_selected_target(monkey
             )
             return {"target": {"kind": self.session}, "steps": steps}
 
-        def window_set_minimized(self, window_id, minimized):
+        def window_set_minimized(self, window_id, minimized, **_preconditions):
             calls.append(("minimize", self.session, window_id, minimized))
             return {"target": {"kind": self.session}, "minimized": minimized}
 
-        def window_set_fullscreen(self, window_id, fullscreen):
+        def window_set_fullscreen(self, window_id, fullscreen, **_preconditions):
             calls.append(("fullscreen", self.session, window_id, fullscreen))
             return {"target": {"kind": self.session}, "fullscreen": fullscreen}
 
-        def window_set_maximized(self, window_id, maximized):
+        def window_set_maximized(self, window_id, maximized, **_preconditions):
             calls.append(("maximized", self.session, window_id, maximized))
             return {"target": {"kind": self.session}, "maximized": maximized}
 
-        def window_set_geometry(self, window_id, x, y, width, height):
+        def window_set_geometry(self, window_id, x, y, width, height, **_preconditions):
             calls.append(("geometry", self.session, window_id, x, y, width, height))
             return {"target": {"kind": self.session}, "verified": True}
 
@@ -365,6 +365,46 @@ def test_global_pointer_and_window_state_cli_use_explicit_selected_target(monkey
         ("pointer-position", "agent-123456789abc"),
         ("observe", "agent-123456789abc", None, False),
     ]
+
+
+def test_cli_passes_window_identity_preconditions(monkeypatch) -> None:
+    calls = []
+
+    class FakeOperations:
+        def __init__(self, session, **_kwargs):
+            self.session = session
+
+        def window_set_maximized(
+            self,
+            window_id,
+            maximized,
+            *,
+            expected_app_id=None,
+            expected_pid=None,
+        ):
+            calls.append((self.session, window_id, maximized, expected_app_id, expected_pid))
+            return {"target": {"kind": self.session}, "maximized": maximized}
+
+    monkeypatch.setattr("kde_desktop_automation.cli.DesktopOperations", FakeOperations)
+    result = CliRunner().invoke(
+        app,
+        [
+            "--session",
+            "user-desktop",
+            "window",
+            "set-maximized",
+            "window-uuid",
+            "maximized",
+            "--expect-app-id",
+            "org.kde.kate",
+            "--expect-pid",
+            "1234",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert calls == [("user-desktop", "window-uuid", True, "org.kde.kate", 1234)]
 
 
 def test_media_list_and_inspect_cli_return_json_for_selected_target(monkeypatch) -> None:
@@ -804,8 +844,25 @@ def test_window_screenshot_cli_uses_shared_selected_window_operation(monkeypatch
         def __init__(self, session, **_kwargs):
             self.session = session
 
-        def screenshot_window(self, selected_window_id, selected_output, *, overwrite=False):
-            calls.append((self.session, selected_window_id, selected_output, overwrite))
+        def screenshot_window(
+            self,
+            selected_window_id,
+            selected_output,
+            *,
+            overwrite=False,
+            expected_app_id=None,
+            expected_pid=None,
+        ):
+            calls.append(
+                (
+                    self.session,
+                    selected_window_id,
+                    selected_output,
+                    overwrite,
+                    expected_app_id,
+                    expected_pid,
+                )
+            )
             return {
                 "target": {"kind": self.session, "window_id": selected_window_id},
                 "path": str(selected_output),
@@ -830,7 +887,7 @@ def test_window_screenshot_cli_uses_shared_selected_window_operation(monkeypatch
     )
 
     assert result.exit_code == 0, result.stdout + result.stderr
-    assert calls == [("user-desktop", window_id, output, True)]
+    assert calls == [("user-desktop", window_id, output, True, None, None)]
     payload = json.loads(result.stdout)
     assert payload["data"]["target"]["window_id"] == window_id
     assert payload["data"]["focus_changed"] is False

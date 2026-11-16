@@ -6,7 +6,7 @@ import logging
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, TypedDict
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, ImageContent, TextContent, ToolAnnotations
@@ -43,6 +43,10 @@ window; activate it explicitly first. They use KWin fake input through
 compositor focus, so checking the window ID does not make delivery atomic to that
 window. Global pointer click/drag tools instead take logical desktop pixels and
 are not window-bound; they can move the pointer and change the active window.
+Window UUIDs are valid only for the selected session and while the window exists.
+Refresh the window list after `stale_target`; optional `expected_app_id` and
+`expected_pid` preconditions guard against an identity mismatch but are not atomic
+and do not pin geometry or state to an observation.
 Live window activation/minimization and explicit pointer actions may change user
 focus. KWin may ignore fake-input events, so a successful tool call is not proof
 that an application received the action; verify with a screenshot or independent
@@ -100,14 +104,42 @@ PrivateSessionId = Annotated[
         ),
     ),
 ]
-WindowId = Annotated[str, Field(min_length=1, max_length=64)]
+WindowId = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=64,
+        description="Window UUID from list/find in this exact selected session.",
+    ),
+]
 Selector = Annotated[str, Field(min_length=1, max_length=512)]
+ExpectedAppId = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=512,
+        description="Optional identity precondition; mismatch fails with stale_target.",
+    ),
+]
+ExpectedPid = Annotated[
+    int,
+    Field(
+        strict=True,
+        gt=0,
+        description="Optional process identity precondition; mismatch fails with stale_target.",
+    ),
+]
 LogicalCoordinate = Annotated[int, Field(strict=True)]
 WindowFrameCoordinate = Annotated[int, Field(strict=True, ge=-32_768, le=32_768)]
 MediaAction = Literal["play", "pause", "play-pause", "stop", "next", "previous", "seek"]
 MediaPlaybackStatus = Literal["Playing", "Paused", "Stopped"]
 AudioDirection = Literal["sink", "source"]
 LiveDesktopTarget = Literal["user-desktop"]
+
+
+class WindowPreconditionKwargs(TypedDict, total=False):
+    expected_app_id: str
+    expected_pid: int
 
 
 def _default_manager() -> SessionManager:
@@ -136,6 +168,18 @@ def _invoke(action: Callable[[], dict[str, Any]]) -> CallToolResult:
         return _success(action())
     except InteractionError as exc:
         return _failure(exc)
+
+
+def _window_precondition_kwargs(
+    expected_app_id: str | None,
+    expected_pid: int | None,
+) -> WindowPreconditionKwargs:
+    preconditions: WindowPreconditionKwargs = {}
+    if expected_app_id is not None:
+        preconditions["expected_app_id"] = expected_app_id
+    if expected_pid is not None:
+        preconditions["expected_pid"] = expected_pid
+    return preconditions
 
 
 def create_mcp_server(
@@ -323,9 +367,19 @@ def create_mcp_server(
         annotations=ToolAnnotations(destructiveHint=False, openWorldHint=True),
         structured_output=False,
     )
-    def window_activate(session: TargetSession, window_id: WindowId) -> CallToolResult:
-        """Activate by session-scoped UUID; live activation may switch desktops and move focus."""
-        return _invoke(lambda: desktop_operations(session).window_activate(window_id))
+    def window_activate(
+        session: TargetSession,
+        window_id: WindowId,
+        expected_app_id: ExpectedAppId | None = None,
+        expected_pid: ExpectedPid | None = None,
+    ) -> CallToolResult:
+        """Activate by session-scoped UUID and optional current identity precondition."""
+        return _invoke(
+            lambda: desktop_operations(session).window_activate(
+                window_id,
+                **_window_precondition_kwargs(expected_app_id, expected_pid),
+            )
+        )
 
     @server.tool(
         name="kde_window_set_minimized",
@@ -344,10 +398,16 @@ def create_mcp_server(
         session: TargetSession,
         window_id: WindowId,
         minimized: bool,
+        expected_app_id: ExpectedAppId | None = None,
+        expected_pid: ExpectedPid | None = None,
     ) -> CallToolResult:
-        """Set an explicit minimized boolean for one window in the selected session."""
+        """Set minimized state, optionally requiring matching app ID/PID."""
         return _invoke(
-            lambda: desktop_operations(session).window_set_minimized(window_id, minimized)
+            lambda: desktop_operations(session).window_set_minimized(
+                window_id,
+                minimized,
+                **_window_precondition_kwargs(expected_app_id, expected_pid),
+            )
         )
 
     @server.tool(
@@ -368,10 +428,16 @@ def create_mcp_server(
         session: TargetSession,
         window_id: WindowId,
         fullscreen: bool,
+        expected_app_id: ExpectedAppId | None = None,
+        expected_pid: ExpectedPid | None = None,
     ) -> CallToolResult:
         """Set an explicit fullscreen boolean for one window in the selected session."""
         return _invoke(
-            lambda: desktop_operations(session).window_set_fullscreen(window_id, fullscreen)
+            lambda: desktop_operations(session).window_set_fullscreen(
+                window_id,
+                fullscreen,
+                **_window_precondition_kwargs(expected_app_id, expected_pid),
+            )
         )
 
     @server.tool(
@@ -392,10 +458,16 @@ def create_mcp_server(
         session: TargetSession,
         window_id: WindowId,
         maximized: bool,
+        expected_app_id: ExpectedAppId | None = None,
+        expected_pid: ExpectedPid | None = None,
     ) -> CallToolResult:
         """Set an explicit maximized boolean for one window in the selected session."""
         return _invoke(
-            lambda: desktop_operations(session).window_set_maximized(window_id, maximized)
+            lambda: desktop_operations(session).window_set_maximized(
+                window_id,
+                maximized,
+                **_window_precondition_kwargs(expected_app_id, expected_pid),
+            )
         )
 
     @server.tool(
@@ -418,6 +490,8 @@ def create_mcp_server(
         y: WindowFrameCoordinate,
         width: Annotated[int, Field(strict=True, ge=1, le=32_768)],
         height: Annotated[int, Field(strict=True, ge=1, le=32_768)],
+        expected_app_id: ExpectedAppId | None = None,
+        expected_pid: ExpectedPid | None = None,
     ) -> CallToolResult:
         """Set and verify one window's KWin frame x/y/width/height."""
         return _invoke(
@@ -427,6 +501,7 @@ def create_mcp_server(
                 y,
                 width,
                 height,
+                **_window_precondition_kwargs(expected_app_id, expected_pid),
             )
         )
 
@@ -440,9 +515,17 @@ def create_mcp_server(
         session: TargetSession,
         window_id: WindowId,
         chord: Annotated[str, Field(min_length=1, max_length=128)],
+        expected_app_id: ExpectedAppId | None = None,
+        expected_pid: ExpectedPid | None = None,
     ) -> CallToolResult:
-        """Submit a key chord (for example CTRL+S) to the named, already-active window."""
-        return _invoke(lambda: desktop_operations(session).input_key(window_id, chord))
+        """Submit a key chord with optional current app ID/PID preconditions."""
+        return _invoke(
+            lambda: desktop_operations(session).input_key(
+                window_id,
+                chord,
+                **_window_precondition_kwargs(expected_app_id, expected_pid),
+            )
+        )
 
     @server.tool(
         name="kde_input_type",
@@ -456,9 +539,17 @@ def create_mcp_server(
         session: TargetSession,
         window_id: WindowId,
         text: Annotated[str, Field(max_length=4096)],
+        expected_app_id: ExpectedAppId | None = None,
+        expected_pid: ExpectedPid | None = None,
     ) -> CallToolResult:
-        """Submit literal text to the named, already-active window."""
-        return _invoke(lambda: desktop_operations(session).input_type(window_id, text))
+        """Submit text with optional current app ID/PID preconditions."""
+        return _invoke(
+            lambda: desktop_operations(session).input_type(
+                window_id,
+                text,
+                **_window_precondition_kwargs(expected_app_id, expected_pid),
+            )
+        )
 
     @server.tool(
         name="kde_input_click",
@@ -474,14 +565,17 @@ def create_mcp_server(
         x: Annotated[float, Field(ge=0.0, le=1.0)],
         y: Annotated[float, Field(ge=0.0, le=1.0)],
         button: Literal["left", "middle", "right"] = "left",
+        expected_app_id: ExpectedAppId | None = None,
+        expected_pid: ExpectedPid | None = None,
     ) -> CallToolResult:
-        """Click normalized window-relative coordinates; the target must already be active."""
+        """Click with optional current app ID/PID preconditions; target must be active."""
         return _invoke(
             lambda: desktop_operations(session).input_click(
                 window_id,
                 x,
                 y,
                 button=button,
+                **_window_precondition_kwargs(expected_app_id, expected_pid),
             )
         )
 
@@ -903,6 +997,8 @@ def create_mcp_server(
         window_id: WindowId,
         output: str | None = None,
         overwrite: bool = False,
+        expected_app_id: ExpectedAppId | None = None,
+        expected_pid: ExpectedPid | None = None,
     ) -> CallToolResult:
         """Capture a selected window as image content, optionally saving its PNG."""
         try:
@@ -912,7 +1008,12 @@ def create_mcp_server(
                     prefix="kde-desktop-window-shot-"
                 ) as temporary_dir:
                     screenshot_path = Path(temporary_dir) / "window.png"
-                    data = operations.screenshot_window(window_id, screenshot_path)
+                    data = operations.screenshot_window(
+                        window_id,
+                        screenshot_path,
+                        expected_app_id=expected_app_id,
+                        expected_pid=expected_pid,
+                    )
                     image_bytes = screenshot_path.read_bytes()
                 data = data | {"path": None, "image_embedded": True}
             else:
@@ -921,6 +1022,8 @@ def create_mcp_server(
                     window_id,
                     screenshot_path,
                     overwrite=overwrite,
+                    expected_app_id=expected_app_id,
+                    expected_pid=expected_pid,
                 )
                 image_bytes = screenshot_path.read_bytes()
                 data = data | {"image_embedded": True}

@@ -29,6 +29,21 @@ class FakeManager:
         self.calls.append(("list_windows", session_id))
         return {"target": {"kind": "agent-session", "session_id": session_id}, "windows": []}
 
+    def inspect_window(self, session_id: str, window_id: str) -> dict[str, Any]:
+        self.calls.append(("inspect_window", session_id, window_id))
+        return {
+            "target": {"kind": "agent-session", "session_id": session_id},
+            "window": {
+                "window_id": window_id,
+                "app_id": "org.kde.kate",
+                "pid": 1234,
+            },
+        }
+
+    def activate_window(self, session_id: str, window_id: str) -> dict[str, Any]:
+        self.calls.append(("activate_window", session_id, window_id))
+        return {"target": {"kind": "agent-session", "session_id": session_id}}
+
     def find_window(self, session_id: str, *, app_id: str | None, title: str | None):
         self.calls.append(("find_window", session_id, app_id, title))
         return {"target": {"kind": "agent-session", "session_id": session_id}, "window": {}}
@@ -100,6 +115,7 @@ class FakeUserDesktop:
     def __init__(self) -> None:
         self.calls: list[tuple[str, ...]] = []
         self.active_window_id: str | None = None
+        self.window_identity = {"app_id": "org.kde.kate", "pid": 1234}
 
     def list_windows(self) -> dict[str, Any]:
         self.calls.append(("list_windows",))
@@ -158,7 +174,11 @@ class FakeUserDesktop:
         self.calls.append(("inspect_window", window_id))
         return {
             "target": {"kind": "user-desktop"},
-            "window": {"window_id": window_id, "active": self.active_window_id == window_id},
+            "window": {
+                "window_id": window_id,
+                "active": self.active_window_id == window_id,
+                **self.window_identity,
+            },
         }
 
     def activate_window(self, window_id: str) -> dict[str, Any]:
@@ -313,6 +333,68 @@ def test_fullscreen_and_maximize_operations_use_explicit_desired_states() -> Non
     assert manager.calls == [
         ("set_window_fullscreen", "agent-123456789abc", "window-uuid", False),
         ("set_window_maximized", "agent-123456789abc", "window-uuid", True),
+    ]
+
+
+def test_window_identity_preconditions_are_checked_before_live_mutation() -> None:
+    live_desktop = FakeUserDesktop()
+    operations = DesktopOperations("user-desktop", user_desktop=live_desktop)  # type: ignore[arg-type]
+
+    operations.window_set_maximized(
+        "window-uuid",
+        True,
+        expected_app_id="org.kde.kate",
+        expected_pid=1234,
+    )
+
+    assert live_desktop.calls == [
+        ("inspect_window", "window-uuid"),
+        ("set_window_maximized", "window-uuid", True),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("expected_app_id", "expected_pid", "observed_identity"),
+    [
+        ("org.kde.konsole", None, {"app_id": "org.kde.kate", "pid": 1234}),
+        (None, 5678, {"app_id": "org.kde.kate", "pid": 1234}),
+    ],
+)
+def test_stale_window_identity_precondition_fails_before_mutation(
+    expected_app_id: str | None,
+    expected_pid: int | None,
+    observed_identity: dict[str, Any],
+) -> None:
+    live_desktop = FakeUserDesktop()
+    live_desktop.window_identity = observed_identity
+    operations = DesktopOperations("user-desktop", user_desktop=live_desktop)  # type: ignore[arg-type]
+
+    with pytest.raises(InteractionError) as error:
+        operations.window_set_maximized(
+            "window-uuid",
+            True,
+            expected_app_id=expected_app_id,
+            expected_pid=expected_pid,
+        )
+
+    assert error.value.code == "stale_target"
+    assert error.value.details["mismatches"]
+    assert live_desktop.calls == [("inspect_window", "window-uuid")]
+
+
+def test_window_precondition_routes_inspection_to_selected_private_session() -> None:
+    manager = FakeManager()
+    operations = DesktopOperations("agent-123456789abc", manager=manager)  # type: ignore[arg-type]
+
+    operations.window_activate(
+        "window-uuid",
+        expected_app_id="org.kde.kate",
+        expected_pid=1234,
+    )
+
+    assert manager.calls == [
+        ("inspect_window", "agent-123456789abc", "window-uuid"),
+        ("activate_window", "agent-123456789abc", "window-uuid"),
     ]
 
 
