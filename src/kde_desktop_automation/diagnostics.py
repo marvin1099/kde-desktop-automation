@@ -6,7 +6,7 @@ import shutil
 from typing import Any
 
 from kde_desktop_automation import __version__
-from kde_desktop_automation.backends.screenshot_helper import screenshot_helper_path
+from kde_desktop_automation.backends.screenshot_helper import screenshot_helper_status
 from kde_desktop_automation.backends.user_desktop import user_desktop_environment_issue
 from kde_desktop_automation.process import pidfd_supported
 
@@ -26,11 +26,13 @@ _TOOLS = (
 
 def build_doctor_report() -> dict[str, Any]:
     tools = {name: shutil.which(name) for name in _TOOLS}
-    tools["kde-desktop-screenshot"] = screenshot_helper_path()
+    screenshot_status = screenshot_helper_status()
+    helper_path = screenshot_status["helper"]
+    tools["kde-desktop-screenshot"] = helper_path if isinstance(helper_path, str) else None
     kwin = tools["kwin_wayland"] is not None
     bus = tools["dbus-daemon"] is not None
     displays = tools["wlpdisplays"] is not None
-    screenshot_helper = tools["kde-desktop-screenshot"] is not None
+    screenshot_helper_ready = screenshot_status["ready"] is True
     wayland_client = ctypes.util.find_library("wayland-client") is not None
     user_desktop_issue = user_desktop_environment_issue()
     if user_desktop_issue is None and tools["kdotool"] is None:
@@ -54,12 +56,13 @@ def build_doctor_report() -> dict[str, Any]:
             "inspected": False,
         },
         "tools": tools,
+        "screenshot_helper": screenshot_status,
         "agent_session": {
             "backend": "kwin-virtual",
             "create": kwin and bus and displays and process_control,
             "display.inspect": displays,
-            "screenshot.capture": screenshot_helper,
-            "screenshot.window.capture": None if screenshot_helper else False,
+            "screenshot.capture": screenshot_helper_ready,
+            "screenshot.window.capture": None if screenshot_helper_ready else False,
             "session.stop": process_control,
             "window.list": False,
             "window.inspect": False,
@@ -90,9 +93,9 @@ def build_doctor_report() -> dict[str, Any]:
             "window.activate": None,
             "window.set_minimized": None,
             "window.capability_probe_performed": False,
-            "screenshot.capture": user_desktop_ready and screenshot_helper,
+            "screenshot.capture": user_desktop_ready and screenshot_helper_ready,
             "screenshot.window.capture": (
-                None if user_desktop_ready and screenshot_helper else False
+                None if user_desktop_ready and screenshot_helper_ready else False
             ),
             "input.protocol_version": None,
             "input.key": None,

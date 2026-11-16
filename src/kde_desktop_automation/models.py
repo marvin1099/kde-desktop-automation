@@ -4,7 +4,7 @@ import shutil
 from dataclasses import dataclass
 from typing import Any
 
-from kde_desktop_automation.backends.screenshot_helper import screenshot_helper_available
+from kde_desktop_automation.backends.screenshot_helper import screenshot_helper_ready
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,9 +142,9 @@ class SessionRecord:
             },
             "capabilities": {
                 "display.inspect": True,
-                "screenshot.capture": screenshot_helper_available(),
+                "screenshot.capture": screenshot_helper_ready(),
                 "screenshot.window.capture": window_management_available
-                and screenshot_helper_available(),
+                and screenshot_helper_ready(),
                 "window.list": window_management_available,
                 "window.find": window_management_available,
                 "window.wait": window_management_available,

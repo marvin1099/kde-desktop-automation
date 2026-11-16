@@ -29,6 +29,22 @@ def _png_image(width: int, height: int, compressed_data: bytes | None = None) ->
     )
 
 
+@pytest.fixture(autouse=True)
+def screenshot_helper_is_ready(monkeypatch) -> None:
+    monkeypatch.setattr(
+        screenshots,
+        "screenshot_helper_status",
+        lambda _env=None: {
+            "available": True,
+            "helper": "/usr/bin/kde-desktop-screenshot",
+            "registered": True,
+            "desktop_entry": "/home/test/.local/share/applications/kde-desktop-screenshot.desktop",
+            "ready": True,
+            "reason": None,
+        },
+    )
+
+
 def test_capture_window_uses_kwin_screenshot2_for_exact_uuid(tmp_path, monkeypatch) -> None:
     output = tmp_path / "window.png"
     window_id = "e1a03123-8d0c-488d-9d55-1be270c44d50"
@@ -36,11 +52,6 @@ def test_capture_window_uses_kwin_screenshot2_for_exact_uuid(tmp_path, monkeypat
         "WAYLAND_DISPLAY": "agent-wayland",
         "DBUS_SESSION_BUS_ADDRESS": "private-bus",
     }
-    monkeypatch.setattr(
-        screenshots,
-        "screenshot_helper_path",
-        lambda _env=None: "/usr/bin/kde-desktop-screenshot",
-    )
 
     def fake_run(argv, *, env, timeout):
         assert argv[1:4] == ["capture-window", "--window-id", window_id]
@@ -64,16 +75,36 @@ def test_capture_window_uses_kwin_screenshot2_for_exact_uuid(tmp_path, monkeypat
     assert os.stat(output).st_mode & 0o777 == 0o600
 
 
+def test_capture_fails_with_actionable_error_without_authorized_registration(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    output = tmp_path / "not-authorized.png"
+    monkeypatch.setattr(
+        screenshots,
+        "screenshot_helper_status",
+        lambda _env=None: {
+            "available": True,
+            "helper": "/usr/bin/kde-desktop-screenshot",
+            "registered": False,
+            "desktop_entry": None,
+            "ready": False,
+            "reason": "desktop_entry_missing_or_untrusted",
+        },
+    )
+
+    with pytest.raises(InteractionError) as error:
+        screenshots.capture_fullscreen(output, env={})
+
+    assert error.value.code == "screenshot_helper_not_authorized"
+    assert not output.exists()
+
+
 def test_capture_fullscreen_uses_kwin_screenshot2_in_requested_environment(
     tmp_path, monkeypatch
 ) -> None:
     output = tmp_path / "private.png"
     session_env = {"WAYLAND_DISPLAY": "agent-wayland"}
-    monkeypatch.setattr(
-        screenshots,
-        "screenshot_helper_path",
-        lambda _env=None: "/usr/bin/kde-desktop-screenshot",
-    )
 
     def fake_run(argv, *, env, timeout):
         assert argv[1] == "capture-workspace"
@@ -93,10 +124,6 @@ def test_capture_fullscreen_uses_kwin_screenshot2_in_requested_environment(
 def test_capture_refuses_to_overwrite_existing_file(tmp_path, monkeypatch) -> None:
     output = tmp_path / "existing.png"
     output.write_bytes(b"keep")
-    monkeypatch.setattr(
-        screenshots, "screenshot_helper_path", lambda _env=None: "/usr/bin/kde-desktop-screenshot"
-    )
-
     with pytest.raises(InteractionError, match="Refusing to overwrite"):
         screenshots.capture_fullscreen(output, env={})
     assert output.read_bytes() == b"keep"
@@ -104,9 +131,6 @@ def test_capture_refuses_to_overwrite_existing_file(tmp_path, monkeypatch) -> No
 
 def test_capture_removes_invalid_temporary_output(tmp_path, monkeypatch) -> None:
     output = tmp_path / "bad.png"
-    monkeypatch.setattr(
-        screenshots, "screenshot_helper_path", lambda _env=None: "/usr/bin/kde-desktop-screenshot"
-    )
 
     def fake_run(argv, *, env, timeout):
         Path(argv[-1]).write_bytes(b"not a png")
@@ -122,9 +146,6 @@ def test_capture_removes_invalid_temporary_output(tmp_path, monkeypatch) -> None
 def test_failed_overwrite_preserves_existing_screenshot(tmp_path, monkeypatch) -> None:
     output = tmp_path / "existing.png"
     output.write_bytes(b"keep the previous capture")
-    monkeypatch.setattr(
-        screenshots, "screenshot_helper_path", lambda _env=None: "/usr/bin/kde-desktop-screenshot"
-    )
 
     def fake_run(argv, *, env, timeout):
         Path(argv[-1]).write_bytes(_png_image(1024, 768))
@@ -147,9 +168,6 @@ def test_capture_rejects_unsafe_shared_output_directory(tmp_path, monkeypatch) -
     shared = tmp_path / "shared"
     shared.mkdir()
     shared.chmod(0o777)
-    monkeypatch.setattr(
-        screenshots, "screenshot_helper_path", lambda _env=None: "/usr/bin/kde-desktop-screenshot"
-    )
 
     def unexpected_run(*args, **kwargs):
         raise AssertionError("must not invoke KWin Screenshot2")
@@ -168,9 +186,6 @@ def test_shared_output_parent_requires_trusted_sticky_directory() -> None:
 
 def test_capture_rejects_truncated_png_before_install(tmp_path, monkeypatch) -> None:
     output = tmp_path / "truncated.png"
-    monkeypatch.setattr(
-        screenshots, "screenshot_helper_path", lambda _env=None: "/usr/bin/kde-desktop-screenshot"
-    )
 
     def fake_run(argv, *, env, timeout):
         Path(argv[-1]).write_bytes(_png_image(10, 10)[:24])
@@ -185,9 +200,6 @@ def test_capture_rejects_truncated_png_before_install(tmp_path, monkeypatch) -> 
 
 def test_capture_rejects_invalid_compressed_image_data(tmp_path, monkeypatch) -> None:
     output = tmp_path / "invalid-idat.png"
-    monkeypatch.setattr(
-        screenshots, "screenshot_helper_path", lambda _env=None: "/usr/bin/kde-desktop-screenshot"
-    )
 
     def fake_run(argv, *, env, timeout):
         Path(argv[-1]).write_bytes(_png_image(10, 10, compressed_data=b"not-zlib"))

@@ -633,7 +633,7 @@ def test_live_capabilities_probe_window_service_and_report_focus_routing(
     backend, _commands = _backend(tmp_path, monkeypatch)
     monkeypatch.setattr(user_desktop, "fake_input_version", lambda _socket: 6)
     monkeypatch.setattr(user_desktop.shutil, "which", lambda name: f"/usr/bin/{name}")
-    monkeypatch.setattr(user_desktop, "screenshot_helper_available", lambda _env=None: True)
+    monkeypatch.setattr(user_desktop, "screenshot_helper_ready", lambda _env=None: True)
 
     result = backend.capabilities()
 

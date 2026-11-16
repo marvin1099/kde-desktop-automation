@@ -39,20 +39,19 @@ user's local prefix (not system-wide):
 ```bash
 # Debian/Ubuntu package names; use the matching Qt 6 development packages on other systems.
 sudo apt install cmake g++ qt6-base-dev
-cmake -S native/screenshot-helper -B build/screenshot-helper \
-  -DCMAKE_INSTALL_PREFIX="$HOME/.local"
-cmake --build build/screenshot-helper
-cmake --install build/screenshot-helper
-kbuildsycoca6 --noincremental
+bash scripts/install-screenshot-helper.sh
 ```
 
-Make sure `$HOME/.local/bin` is in `PATH`. If it is not, set
-`KDE_DESKTOP_SCREENSHOT_HELPER="$HOME/.local/bin/kde-desktop-screenshot"` for
-the CLI/MCP process. Private sessions copy only the matching helper desktop
-entry into their isolated application home; they do not authorize Python or
-inherit the user's full application-data directory. Screenshot capabilities
-report helper presence but do not probe KWin's authorization until a capture is
-requested.
+The script builds and installs only under `$HOME/.local` (or the configured
+`XDG_DATA_HOME` for its desktop entry), then refreshes KDE's service cache. No
+system-wide helper installation is performed. If `$HOME/.local/bin` is not in
+the MCP process's `PATH`, set `KDE_DESKTOP_SCREENSHOT_HELPER` to the installed
+binary in the MCP launch environment. Private sessions copy only the matching
+helper desktop entry into their isolated application home; they do not authorize
+Python or inherit the user's full application-data directory. `doctor` and
+capability reports verify the helper and matching authorization declaration;
+KWin's actual authorization is still verified by a capture request. Restart
+private sessions created before installation so they receive the entry.
 
 `session create` prints the generated ID. The isolated session is not a
 security sandbox: it runs as the current Unix user, though with a private home
@@ -403,6 +402,9 @@ Install the project with `uv sync`, then configure your MCP client to launch
   "mcpServers": {
     "kde-desktop": {
       "command": "uv",
+      "env": {
+        "KDE_DESKTOP_SCREENSHOT_HELPER": "/home/your-user/.local/bin/kde-desktop-screenshot"
+      },
       "args": [
         "run",
         "--directory",

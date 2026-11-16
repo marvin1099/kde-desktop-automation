@@ -3,6 +3,7 @@ import json
 from rich.text import Text
 from typer.testing import CliRunner
 
+from kde_desktop_automation import diagnostics
 from kde_desktop_automation.cli import app
 
 
@@ -24,6 +25,25 @@ def test_doctor_json_requires_explicit_user_desktop_commands() -> None:
     assert "playerctl" in report["data"]["tools"]
     assert "wpctl" in report["data"]["tools"]
     assert "pactl" in report["data"]["tools"]
+
+
+def test_doctor_reports_screenshot_helper_registration_readiness(monkeypatch) -> None:
+    status = {
+        "available": True,
+        "helper": "/home/test/.local/bin/kde-desktop-screenshot",
+        "registered": False,
+        "desktop_entry": None,
+        "ready": False,
+        "reason": "desktop_entry_missing_or_untrusted",
+    }
+    monkeypatch.setattr(diagnostics, "screenshot_helper_status", lambda: status)
+
+    result = CliRunner().invoke(app, ["doctor", "--json"])
+
+    report = json.loads(result.stdout)["data"]
+    assert report["screenshot_helper"] == status
+    assert report["tools"]["kde-desktop-screenshot"] == status["helper"]
+    assert report["agent_session"]["screenshot.capture"] is False
 
 
 def test_media_control_cli_passes_explicit_player_action_and_seek_offset(monkeypatch) -> None:

@@ -205,7 +205,7 @@ def test_private_capabilities_report_screenshot_executable_availability(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = manager.create_agent_session("screenshot-capability", 640, 480)
-    monkeypatch.setattr(models, "screenshot_helper_available", lambda: True)
+    monkeypatch.setattr(models, "screenshot_helper_ready", lambda: True)
 
     assert manager.get_session(session.session_id)["capabilities"]["screenshot.capture"] is True
     assert (
@@ -219,7 +219,7 @@ def test_private_capabilities_report_screenshot_executable_availability(
         manager.get_session(session.session_id)["capabilities"]["screenshot.window.capture"] is True
     )
 
-    monkeypatch.setattr(models, "screenshot_helper_available", lambda: False)
+    monkeypatch.setattr(models, "screenshot_helper_ready", lambda: False)
     assert manager.get_session(session.session_id)["capabilities"]["screenshot.capture"] is False
     assert (
         manager.get_session(session.session_id)["capabilities"]["screenshot.window.capture"]

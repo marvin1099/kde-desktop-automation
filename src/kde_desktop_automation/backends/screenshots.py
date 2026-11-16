@@ -12,7 +12,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any, BinaryIO, Literal
 
-from kde_desktop_automation.backends.screenshot_helper import screenshot_helper_path
+from kde_desktop_automation.backends.screenshot_helper import screenshot_helper_status
 from kde_desktop_automation.errors import InteractionError
 from kde_desktop_automation.process import require_success, run_command
 
@@ -77,14 +77,26 @@ def _capture_screenshot(
     mode: Literal["workspace", "window"],
     window_id: str | None = None,
 ) -> dict[str, Any]:
-    helper = screenshot_helper_path(env)
-    if helper is None:
+    helper_status = screenshot_helper_status(env)
+    if helper_status["available"] is not True:
         target_description = "KWin Screenshot2 helper"
         raise InteractionError(
             "backend_unavailable",
             f"The native {target_description} is required to capture screenshots.",
             details={"executable": "kde-desktop-screenshot"},
         )
+    if helper_status["ready"] is not True:
+        raise InteractionError(
+            "screenshot_helper_not_authorized",
+            "The Screenshot2 helper lacks a matching desktop entry declaring KWin authorization.",
+            details={
+                "helper": helper_status["helper"],
+                "desktop_entry": helper_status["desktop_entry"],
+                "reason": helper_status["reason"],
+                "setup": "Install the helper and refresh the KDE application service cache.",
+            },
+        )
+    helper = str(helper_status["helper"])
     if mode == "window" and not window_id:
         raise InteractionError(
             "invalid_window_id",

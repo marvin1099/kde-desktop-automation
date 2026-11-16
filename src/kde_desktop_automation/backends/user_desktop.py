@@ -33,7 +33,7 @@ from kde_desktop_automation.backends.kwin_input import (
     validate_drag_steps,
     validate_drag_timing,
 )
-from kde_desktop_automation.backends.screenshot_helper import screenshot_helper_available
+from kde_desktop_automation.backends.screenshot_helper import screenshot_helper_ready
 from kde_desktop_automation.backends.screenshots import (
     capture_fullscreen,
     capture_window,
@@ -572,9 +572,9 @@ class UserDesktopBackend:
                 "desktop.observe": window_available and shutil.which("wlpdisplays") is not None,
                 "input.pointer_position": shutil.which("kdotool") is not None,
                 "display.inspect": shutil.which("wlpdisplays") is not None,
-                "screenshot.capture": screenshot_helper_available(self.environ),
+                "screenshot.capture": screenshot_helper_ready(self.environ),
                 "screenshot.window.capture": window_available
-                and screenshot_helper_available(self.environ),
+                and screenshot_helper_ready(self.environ),
                 "input.key": key_available,
                 "input.text": key_available,
                 "input.click": click_available,
@@ -617,8 +617,8 @@ class UserDesktopBackend:
                 "window_management": "read-only window listing and KWin D-Bus metadata query",
                 "display": "wlpdisplays executable presence only",
                 "screenshot": (
-                    "KWin Screenshot2 helper presence only; restricted D-Bus authorization "
-                    "is not probed"
+                    "KWin Screenshot2 executable and matching restricted-interface desktop entry "
+                    "are present; KWin authorization is not probed"
                 ),
             },
             "window_reason": window_reason,
