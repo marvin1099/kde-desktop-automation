@@ -77,9 +77,10 @@ class FakeBackend:
     ) -> dict[str, object]:
         return {"path": str(output), "width": session.width, "height": session.height}
 
-    def screenshot_active_window(
+    def screenshot_window(
         self,
         session: SessionRecord,
+        window_id: str,
         output: Path,
         *,
         overwrite: bool,
@@ -88,7 +89,8 @@ class FakeBackend:
             "path": str(output),
             "width": 320,
             "height": 240,
-            "capture_mode": "active-window",
+            "capture_mode": "window",
+            "window_id": window_id,
         }
 
     def launch_application(
@@ -203,11 +205,7 @@ def test_private_capabilities_report_screenshot_executable_availability(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = manager.create_agent_session("screenshot-capability", 640, 480)
-    monkeypatch.setattr(
-        models.shutil,
-        "which",
-        lambda executable: "/usr/bin/spectacle" if executable == "spectacle" else None,
-    )
+    monkeypatch.setattr(models, "screenshot_helper_available", lambda: True)
 
     assert manager.get_session(session.session_id)["capabilities"]["screenshot.capture"] is True
     assert (
@@ -221,7 +219,7 @@ def test_private_capabilities_report_screenshot_executable_availability(
         manager.get_session(session.session_id)["capabilities"]["screenshot.window.capture"] is True
     )
 
-    monkeypatch.setattr(models.shutil, "which", lambda _executable: None)
+    monkeypatch.setattr(models, "screenshot_helper_available", lambda: False)
     assert manager.get_session(session.session_id)["capabilities"]["screenshot.capture"] is False
     assert (
         manager.get_session(session.session_id)["capabilities"]["screenshot.window.capture"]
@@ -531,14 +529,24 @@ def test_private_screenshot_includes_target_and_shared_coordinate_space(
     assert capture["coordinate_space"] == "screenshot-pixels"
 
 
-def test_private_active_window_screenshot_reports_target_and_mode(
+def test_private_selected_window_screenshot_reports_target_and_mode(
     manager: SessionManager,
     tmp_path: Path,
 ) -> None:
     session = manager.create_agent_session("window-screenshot", 800, 600)
 
-    capture = manager.screenshot_active_window(session.session_id, tmp_path / "window.png")
+    window_id = "b8e51b61-fdca-4886-8981-d6a10d6ee445"
+    capture = manager.screenshot_window(
+        session.session_id,
+        window_id,
+        tmp_path / "window.png",
+    )
 
-    assert capture["target"] == {"kind": "agent-session", "session_id": session.session_id}
+    assert capture["target"] == {
+        "kind": "agent-session",
+        "session_id": session.session_id,
+        "window_id": window_id,
+    }
     assert capture["coordinate_space"] == "screenshot-pixels"
-    assert capture["capture_mode"] == "active-window"
+    assert capture["capture_mode"] == "window"
+    assert capture["window_id"] == window_id

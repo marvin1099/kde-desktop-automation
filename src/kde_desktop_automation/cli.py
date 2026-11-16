@@ -51,7 +51,7 @@ user_input_app = typer.Typer(
 )
 window_app = typer.Typer(
     help=(
-        "List, inspect, find, activate, and set window geometry in the selected session. "
+        "List, inspect, find, capture, activate, and set window geometry in the selected session. "
         "Select it with global --session before 'window'."
     ),
     no_args_is_help=True,
@@ -222,7 +222,7 @@ def screenshot_session(
     overwrite: bool = typer.Option(False, "--overwrite", help="Replace an existing output file."),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
-    """Capture only the private virtual output using Spectacle."""
+    """Capture only the private virtual output through KWin Screenshot2."""
     _run(
         lambda: (_manager().screenshot(session_id, output, overwrite=overwrite), []),
         json_output=json_output,
@@ -329,6 +329,26 @@ def inspect_window(
 ) -> None:
     """Inspect title, app ID, fullscreen, minimized, active state, and geometry."""
     _run(lambda: (_operations(ctx).window_inspect(window_id), []), json_output=json_output)
+
+
+@window_app.command("screenshot")
+def screenshot_window(
+    ctx: Context,
+    window_id: str = typer.Argument(
+        ..., help="UUID from window list/find for the selected target."
+    ),
+    output: Path = typer.Option(..., "--output", "-o", help="Destination PNG path."),
+    overwrite: bool = typer.Option(False, "--overwrite", help="Replace an existing output file."),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Capture one selected window directly, without activating it."""
+    _run(
+        lambda: (
+            _operations(ctx).screenshot_window(window_id, output, overwrite=overwrite),
+            [],
+        ),
+        json_output=json_output,
+    )
 
 
 @window_app.command("activate")
@@ -760,6 +780,27 @@ def inspect_user_window(
     """Read live window identity, geometry, fullscreen, and active state."""
     _run(
         lambda: (_user_desktop_operations().window_inspect(window_id), []),
+        json_output=json_output,
+    )
+
+
+@user_window_app.command("screenshot")
+def screenshot_user_window(
+    window_id: str = typer.Argument(..., help="UUID from user-desktop window list/find."),
+    output: Path = typer.Option(..., "--output", "-o", help="Destination PNG path."),
+    overwrite: bool = typer.Option(False, "--overwrite", help="Replace an existing output file."),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Capture one live window directly through KWin without activating it."""
+    _run(
+        lambda: (
+            _user_desktop_operations().screenshot_window(
+                window_id,
+                output,
+                overwrite=overwrite,
+            ),
+            [],
+        ),
         json_output=json_output,
     )
 

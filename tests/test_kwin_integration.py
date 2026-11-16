@@ -1,5 +1,6 @@
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -8,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from kde_desktop_automation.backends.kwin_virtual import KWinVirtualBackend
+from kde_desktop_automation.operations import DesktopOperations
 from kde_desktop_automation.paths import RuntimePaths
 from kde_desktop_automation.process import process_start_ticks, processes_with_environment_marker
 from kde_desktop_automation.sessions import SessionManager
@@ -21,7 +23,7 @@ pytestmark = [
 ]
 
 
-def test_private_kwin_output_and_screenshot_round_trip(tmp_path, monkeypatch) -> None:
+def test_private_kwin_output_and_process_round_trip(tmp_path, monkeypatch) -> None:
     host_runtime = os.environ.get("XDG_RUNTIME_DIR")
     if not host_runtime:
         pytest.skip("an XDG_RUNTIME_DIR is required")
@@ -49,7 +51,6 @@ def test_private_kwin_output_and_screenshot_round_trip(tmp_path, monkeypatch) ->
 
     monkeypatch.setattr(subprocess, "Popen", record_process_marker)
     session = manager.create_agent_session("integration", 1024, 768)
-    screenshot = tmp_path / "private-output.png"
     marked_helper: subprocess.Popen[bytes] | None = None
     try:
         for identity in (session.kwin_process, session.dbus_process):
@@ -101,10 +102,6 @@ def test_private_kwin_output_and_screenshot_round_trip(tmp_path, monkeypatch) ->
         assert app["process_started"] is True
         assert manager.get_session(session.session_id)["launched_processes"]
 
-        capture = manager.screenshot(session.session_id, screenshot)
-        assert capture["width"] == 1024
-        assert capture["height"] == 768
-        assert Path(capture["path"]).is_file()
     finally:
         _, warnings = manager.stop(session.session_id)
         assert warnings in (
@@ -120,6 +117,122 @@ def test_private_kwin_output_and_screenshot_round_trip(tmp_path, monkeypatch) ->
             assert Path(session.runtime_dir).is_dir()
         else:
             assert not Path(session.runtime_dir).exists()
+
+
+@pytest.mark.skipif(
+    os.environ.get("KDE_DESKTOP_RUN_KWIN_SCREENSHOT_INTEGRATION") != "1",
+    reason=(
+        "set KDE_DESKTOP_RUN_KWIN_SCREENSHOT_INTEGRATION=1 to test authorized "
+        "KWin Screenshot2 capture"
+    ),
+)
+def test_private_kwin_captures_inactive_window_without_changing_focus(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    helper = os.environ.get("KDE_DESKTOP_SCREENSHOT_HELPER") or shutil.which(
+        "kde-desktop-screenshot"
+    )
+    test_window = os.environ.get("KDE_DESKTOP_SCREENSHOT_TEST_WINDOW")
+    if test_window is None:
+        test_window = str(
+            Path(__file__).parents[1]
+            / "build"
+            / "screenshot-helper"
+            / "kde-desktop-screenshot-test-window"
+        )
+    if not helper or not Path(helper).is_file() or not os.access(helper, os.X_OK):
+        pytest.skip("build kde-desktop-screenshot or set KDE_DESKTOP_SCREENSHOT_HELPER")
+    if not Path(test_window).is_file() or not os.access(test_window, os.X_OK):
+        pytest.skip("build kde-desktop-screenshot-test-window or set its path in the environment")
+    if shutil.which("kbuildsycoca6") is None:
+        pytest.skip("kbuildsycoca6 is required to register the private test desktop entry")
+    host_runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not host_runtime:
+        pytest.skip("an XDG_RUNTIME_DIR is required")
+
+    helper = str(Path(helper).resolve())
+    monkeypatch.setenv("KDE_DESKTOP_SCREENSHOT_HELPER", helper)
+    registration_data_home = tmp_path / "host-data"
+    host_applications = registration_data_home / "applications"
+    host_applications.mkdir(parents=True)
+    (host_applications / "kde-desktop-screenshot.desktop").write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=KWin Screenshot2 Integration Helper\n"
+        f'Exec="{helper}"\n'
+        "NoDisplay=true\n"
+        "Terminal=false\n"
+        "X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2;\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XDG_DATA_HOME", str(registration_data_home))
+    paths = RuntimePaths.from_environment(
+        {
+            "XDG_RUNTIME_DIR": host_runtime,
+            "XDG_STATE_HOME": str(tmp_path / "state"),
+        }
+    )
+    backend = KWinVirtualBackend(paths)
+    manager = SessionManager(paths, backend)
+    session = manager.create_agent_session("screenshot2-integration", 1280, 800)
+    try:
+        private_registration = (
+            Path(session.home_dir) / "data" / "applications" / "kde-desktop-screenshot.desktop"
+        )
+        assert private_registration.is_file()
+
+        operations = DesktopOperations(session.session_id, manager=manager)
+        workspace_path = tmp_path / "private-workspace.png"
+        workspace = operations.screenshot(workspace_path)
+        workspace_image = workspace_path.read_bytes()
+        assert workspace_image.startswith(b"\x89PNG\r\n\x1a\n")
+        assert struct.unpack(">II", workspace_image[16:24]) == (1280, 800)
+        assert workspace["source"] == "kwin-screenshot2"
+        assert workspace["api"] == "org.kde.KWin.ScreenShot2"
+
+        target_title = "Screenshot2 inactive target"
+        focus_title = "Screenshot2 focus window"
+        manager.launch_application(session.session_id, (test_window, target_title))
+        manager.launch_application(session.session_id, (test_window, focus_title))
+
+        def wait_for_title(title: str) -> dict[str, object]:
+            deadline = time.monotonic() + 15.0
+            latest: list[dict[str, object]] = []
+            while time.monotonic() < deadline:
+                latest = manager.list_windows(session.session_id)["windows"]
+                match = next((window for window in latest if window["title"] == title), None)
+                if match is not None:
+                    return match
+                time.sleep(0.1)
+            raise AssertionError(f"Timed out waiting for {title!r}; last windows: {latest!r}")
+
+        target = wait_for_title(target_title)
+        focus = wait_for_title(focus_title)
+        target_id = str(target["window_id"])
+        focus_id = str(focus["window_id"])
+        manager.activate_window(session.session_id, focus_id)
+        assert manager.inspect_window(session.session_id, target_id)["window"]["active"] is False
+        assert manager.inspect_window(session.session_id, focus_id)["window"]["active"] is True
+
+        screenshot = tmp_path / "inactive-window.png"
+        capture = operations.screenshot_window(target_id, screenshot)
+
+        image = screenshot.read_bytes()
+        assert image.startswith(b"\x89PNG\r\n\x1a\n")
+        assert struct.unpack(">II", image[16:24]) == (capture["width"], capture["height"])
+        assert capture["source"] == "kwin-screenshot2"
+        assert capture["api"] == "org.kde.KWin.ScreenShot2"
+        assert capture["window_id"] == target_id
+        assert capture["focus_changed"] is False
+        assert capture["window"]["active"] is False
+        assert manager.inspect_window(session.session_id, focus_id)["window"]["active"] is True
+    finally:
+        _, warnings = manager.stop(session.session_id)
+        assert warnings in (
+            [],
+            [f"Private runtime directory needs manual cleanup: {session.runtime_dir}"],
+        )
 
 
 @pytest.mark.skipif(

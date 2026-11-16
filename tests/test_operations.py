@@ -150,17 +150,18 @@ class FakeUserDesktop:
         self.active_window_id = window_id
         return {"active_window_verified": True}
 
-    def screenshot_active_window(
+    def screenshot_window(
         self,
+        window_id: str,
         output: Path,
         *,
         overwrite: bool = False,
     ) -> dict[str, Any]:
-        self.calls.append(("screenshot_active_window", str(output), overwrite))
+        self.calls.append(("screenshot_window", window_id, str(output), overwrite))
         return {
-            "target": {"kind": "user-desktop"},
+            "target": {"kind": "user-desktop", "window_id": window_id},
             "path": str(output),
-            "capture_mode": "active-window",
+            "capture_mode": "window",
             "coordinate_space": "screenshot-pixels",
         }
 
@@ -222,7 +223,7 @@ def test_explicit_live_target_never_constructs_private_manager(monkeypatch) -> N
     assert live_desktop.calls == [("list_windows",)]
 
 
-def test_window_screenshot_activates_selected_window_before_native_capture(
+def test_window_screenshot_captures_selected_window_without_changing_focus(
     tmp_path: Path,
 ) -> None:
     live_desktop = FakeUserDesktop()
@@ -232,19 +233,17 @@ def test_window_screenshot_activates_selected_window_before_native_capture(
 
     assert [call[0] for call in live_desktop.calls] == [
         "inspect_window",
-        "activate_window",
-        "screenshot_active_window",
+        "screenshot_window",
         "inspect_window",
     ]
-    assert result["capture_mode"] == "active-window"
-    assert result["window"]["active"] is True
-    assert result["focus_changed"] is True
+    assert live_desktop.calls[1][1] == "window-1"
+    assert result["capture_mode"] == "window"
+    assert result["window"]["active"] is False
+    assert result["focus_changed"] is False
     assert result["target_window_verified"] is True
 
 
-def test_window_screenshot_does_not_reactivate_an_already_active_window(
-    tmp_path: Path,
-) -> None:
+def test_window_screenshot_preserves_focus_when_target_is_already_active(tmp_path: Path) -> None:
     live_desktop = FakeUserDesktop()
     live_desktop.active_window_id = "window-1"
     operations = DesktopOperations("user-desktop", user_desktop=live_desktop)  # type: ignore[arg-type]
@@ -253,9 +252,10 @@ def test_window_screenshot_does_not_reactivate_an_already_active_window(
 
     assert [call[0] for call in live_desktop.calls] == [
         "inspect_window",
-        "screenshot_active_window",
+        "screenshot_window",
         "inspect_window",
     ]
+    assert live_desktop.calls[1][1] == "window-1"
     assert result["focus_changed"] is False
 
 

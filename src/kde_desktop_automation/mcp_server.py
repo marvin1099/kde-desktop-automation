@@ -54,8 +54,10 @@ screenshot image. Screenshot-pixel mapping is explicit when a single display is
 captured; composite multi-display mapping is reported as unavailable rather than
 guessed. `kde_window_set_geometry` is the precise KWin frame-placement path, while
 `kde_input_drag` remains a real global pointer gesture for UI interactions.
-`kde_screenshot_window` uses Spectacle's native active-window capture for one
-selected window ID; it activates the window if needed and may change live focus.
+`kde_screenshot_window` uses KWin Screenshot2 to capture one selected window UUID
+without activating it. Screenshots require the separately installed,
+KWin-authorized `kde-desktop-screenshot` native helper; Python is not authorized
+to call this restricted D-Bus API directly.
 
 Session IDs select a target; they are not per-client authorization tokens. MCP
 clients sharing this server share the Unix user's authority over managed private
@@ -691,7 +693,8 @@ def create_mcp_server(
         name="kde_desktop_observe",
         description=(
             "Return a fresh desktop snapshot with windows, logical display geometry, pointer/focus "
-            "context, and screenshot metadata/image content when Spectacle is available."
+            "context, and screenshot metadata/image content when the KWin Screenshot2 helper "
+            "is available."
         ),
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
         structured_output=False,
@@ -791,11 +794,10 @@ def create_mcp_server(
     @server.tool(
         name="kde_screenshot_window",
         description=(
-            "Capture one selected window directly with Spectacle's active-window mode, "
-            "not by cropping a desktop screenshot. Activates the window if needed, which "
-            "may change focus on user-desktop. Returns the PNG as an MCP image."
+            "Capture one selected window UUID directly through KWin Screenshot2 without "
+            "activating it. Requires the authorized native helper. Returns the PNG as an MCP image."
         ),
-        annotations=ToolAnnotations(readOnlyHint=False, openWorldHint=False),
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
         structured_output=False,
     )
     def screenshot_window(

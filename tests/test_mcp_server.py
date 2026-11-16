@@ -189,7 +189,7 @@ class FakeOperations:
             "path": str(output),
             "width": 1,
             "height": 1,
-            "capture_mode": "active-window",
+            "capture_mode": "window",
             "target_window_verified": True,
         }
 
@@ -596,7 +596,7 @@ def test_mcp_window_screenshot_returns_selected_window_image_and_metadata(
         "kind": "user-desktop",
         "window_id": window_id,
     }
-    assert result.structuredContent["data"]["capture_mode"] == "active-window"
+    assert result.structuredContent["data"]["capture_mode"] == "window"
     assert result.structuredContent["data"]["target_window_verified"] is True
     assert output.read_bytes() == FakeOperations.screenshot_png
     image = next(block for block in result.content if isinstance(block, ImageContent))
@@ -616,7 +616,7 @@ def test_mcp_instructions_state_live_desktop_safety() -> None:
     assert "PipeWire audio tools are live-user-desktop only" in instructions
     assert "not window-bound" in instructions
     assert "may change user focus" in instructions
-    assert "Spectacle's native active-window capture" in instructions
+    assert "without activating it" in instructions
 
 
 def test_mcp_session_selector_is_not_implicit_for_any_server_mode() -> None:

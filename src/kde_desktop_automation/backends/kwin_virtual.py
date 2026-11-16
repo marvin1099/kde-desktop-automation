@@ -10,6 +10,7 @@ import subprocess
 import time
 import uuid
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -46,9 +47,10 @@ from kde_desktop_automation.backends.kwin_window_management import (
 from kde_desktop_automation.backends.kwin_window_management import (
     set_minimized_window as set_private_window_minimized,
 )
+from kde_desktop_automation.backends.screenshot_helper import copy_private_screenshot_registration
 from kde_desktop_automation.backends.screenshots import (
-    capture_active_window,
     capture_fullscreen,
+    capture_window,
 )
 from kde_desktop_automation.errors import InteractionError
 from kde_desktop_automation.models import ProcessIdentity, SessionRecord
@@ -60,6 +62,7 @@ from kde_desktop_automation.process import (
     process_start_ticks,
     processes_with_environment_marker,
     require_executable,
+    run_command,
     terminate_verified,
 )
 
@@ -75,6 +78,7 @@ _PASSTHROUGH_NAMES = {
     "DRI_PRIME",
     "GBM_BACKEND",
     "__GLX_VENDOR_LIBRARY_NAME",
+    "KDE_DESKTOP_SCREENSHOT_HELPER",
 }
 
 
@@ -156,6 +160,20 @@ class KWinVirtualBackend:
             wayland_display=wayland_display,
             dbus_address=dbus_address,
         )
+        private_registration = copy_private_screenshot_registration(
+            session_paths.home_dir / "data",
+            env=os.environ,
+        )
+        if private_registration is not None:
+            cache_builder = shutil.which("kbuildsycoca6", path=base_env.get("PATH"))
+            if cache_builder is not None:
+                # If optional cache refresh fails, KWin will report authorization on capture.
+                with suppress(InteractionError):
+                    run_command(
+                        [cache_builder, "--noincremental"],
+                        env=base_env,
+                        timeout=20.0,
+                    )
         base_env["KDE_DESKTOP_AUTOMATION_PROCESS_MARKER"] = session_id
 
         log_fd = _open_private_log(session_paths.log_file)
@@ -845,16 +863,18 @@ class KWinVirtualBackend:
             expected_size=(session.width, session.height),
         )
 
-    def screenshot_active_window(
+    def screenshot_window(
         self,
         session: SessionRecord,
+        window_id: str,
         output: Path,
         *,
         overwrite: bool,
     ) -> dict[str, object]:
         self._require_running(session)
-        return capture_active_window(
+        return capture_window(
             output,
+            window_id=window_id,
             env=self.environment(session),
             overwrite=overwrite,
         )

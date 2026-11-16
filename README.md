@@ -16,7 +16,7 @@ be selected explicitly.
 
 - Create private virtual desktops and launch applications inside them.
 - Observe windows, displays, pointer/focus context, and capture full-desktop
-  screenshots; the MCP can also capture individual windows directly.
+  screenshots; the CLI and MCP can also capture individual windows directly.
 - Find, inspect, activate, minimize/restore, and place windows; send guarded
   keyboard/text input and coordinate clicks/drags.
 - Inspect and control MPRIS media players.
@@ -36,6 +36,8 @@ OCR-based control discovery, or app-specific action API yet. See the
 - Optional system utilities provide additional features. Run `kde-desktop
   doctor` to see which are available; per-target `capabilities` reports what can
   be used.
+- Screenshots use KWin Screenshot2 through a separately built and authorized
+  native helper; Spectacle is not used. See the [usage guide](docs/usage.md#kwin-screenshot2-helper).
 
 ## Quick start
 

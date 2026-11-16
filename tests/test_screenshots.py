@@ -1,3 +1,4 @@
+import json
 import os
 import struct
 import zlib
@@ -28,16 +29,58 @@ def _png_image(width: int, height: int, compressed_data: bytes | None = None) ->
     )
 
 
-def test_capture_fullscreen_uses_spectacle_in_requested_environment(tmp_path, monkeypatch) -> None:
-    output = tmp_path / "private.png"
-    session_env = {"WAYLAND_DISPLAY": "agent-wayland"}
-    monkeypatch.setattr(screenshots.shutil, "which", lambda _: "/usr/bin/spectacle")
+def test_capture_window_uses_kwin_screenshot2_for_exact_uuid(tmp_path, monkeypatch) -> None:
+    output = tmp_path / "window.png"
+    window_id = "e1a03123-8d0c-488d-9d55-1be270c44d50"
+    session_env = {
+        "WAYLAND_DISPLAY": "agent-wayland",
+        "DBUS_SESSION_BUS_ADDRESS": "private-bus",
+    }
+    monkeypatch.setattr(
+        screenshots,
+        "screenshot_helper_path",
+        lambda _env=None: "/usr/bin/kde-desktop-screenshot",
+    )
 
     def fake_run(argv, *, env, timeout):
-        assert env == session_env | {"QT_QPA_PLATFORM": "wayland"}
-        assert timeout == 20.0
+        assert argv[1:4] == ["capture-window", "--window-id", window_id]
+        assert argv[4] == "--output"
+        assert env == session_env
+        assert timeout == 30.0
+        Path(argv[-1]).write_bytes(_png_image(520, 360))
+        metadata = json.dumps({"width": 520, "height": 360, "scale": 1.25, "window_id": window_id})
+        return CommandResult(tuple(argv), 0, metadata, "")
+
+    monkeypatch.setattr(screenshots, "run_command", fake_run)
+    result = screenshots.capture_window(output, window_id=window_id, env=session_env)
+
+    assert result["source"] == "kwin-screenshot2"
+    assert result["api"] == "org.kde.KWin.ScreenShot2"
+    assert result["capture_mode"] == "window"
+    assert result["window_id"] == window_id
+    assert result["scale"] == 1.25
+    assert result["width"] == 520
+    assert result["height"] == 360
+    assert os.stat(output).st_mode & 0o777 == 0o600
+
+
+def test_capture_fullscreen_uses_kwin_screenshot2_in_requested_environment(
+    tmp_path, monkeypatch
+) -> None:
+    output = tmp_path / "private.png"
+    session_env = {"WAYLAND_DISPLAY": "agent-wayland"}
+    monkeypatch.setattr(
+        screenshots,
+        "screenshot_helper_path",
+        lambda _env=None: "/usr/bin/kde-desktop-screenshot",
+    )
+
+    def fake_run(argv, *, env, timeout):
+        assert argv[1] == "capture-workspace"
+        assert env == session_env
+        assert timeout == 30.0
         Path(argv[-1]).write_bytes(_png_image(1280, 800))
-        return CommandResult(tuple(argv), 0, "", "")
+        return CommandResult(tuple(argv), 0, '{"width": 1280, "height": 800, "scale": 1.0}', "")
 
     monkeypatch.setattr(screenshots, "run_command", fake_run)
     result = screenshots.capture_fullscreen(output, env=session_env)
@@ -47,33 +90,12 @@ def test_capture_fullscreen_uses_spectacle_in_requested_environment(tmp_path, mo
     assert os.stat(output).st_mode & 0o777 == 0o600
 
 
-def test_capture_active_window_uses_spectacle_native_window_mode(tmp_path, monkeypatch) -> None:
-    output = tmp_path / "window.png"
-    session_env = {"WAYLAND_DISPLAY": "agent-wayland"}
-    monkeypatch.setattr(screenshots.shutil, "which", lambda _: "/usr/bin/spectacle")
-
-    def fake_run(argv, *, env, timeout):
-        assert env == session_env | {"QT_QPA_PLATFORM": "wayland"}
-        assert timeout == 20.0
-        assert "--activewindow" in argv
-        assert "--fullscreen" not in argv
-        Path(argv[-1]).write_bytes(_png_image(520, 360))
-        return CommandResult(tuple(argv), 0, "", "")
-
-    monkeypatch.setattr(screenshots, "run_command", fake_run)
-    result = screenshots.capture_active_window(output, env=session_env)
-
-    assert result["capture_mode"] == "active-window"
-    assert result["coordinate_space"] == "active-window-pixels"
-    assert result["width"] == 520
-    assert result["height"] == 360
-    assert os.stat(output).st_mode & 0o777 == 0o600
-
-
 def test_capture_refuses_to_overwrite_existing_file(tmp_path, monkeypatch) -> None:
     output = tmp_path / "existing.png"
     output.write_bytes(b"keep")
-    monkeypatch.setattr(screenshots.shutil, "which", lambda _: "/usr/bin/spectacle")
+    monkeypatch.setattr(
+        screenshots, "screenshot_helper_path", lambda _env=None: "/usr/bin/kde-desktop-screenshot"
+    )
 
     with pytest.raises(InteractionError, match="Refusing to overwrite"):
         screenshots.capture_fullscreen(output, env={})
@@ -82,7 +104,9 @@ def test_capture_refuses_to_overwrite_existing_file(tmp_path, monkeypatch) -> No
 
 def test_capture_removes_invalid_temporary_output(tmp_path, monkeypatch) -> None:
     output = tmp_path / "bad.png"
-    monkeypatch.setattr(screenshots.shutil, "which", lambda _: "/usr/bin/spectacle")
+    monkeypatch.setattr(
+        screenshots, "screenshot_helper_path", lambda _env=None: "/usr/bin/kde-desktop-screenshot"
+    )
 
     def fake_run(argv, *, env, timeout):
         Path(argv[-1]).write_bytes(b"not a png")
@@ -98,11 +122,13 @@ def test_capture_removes_invalid_temporary_output(tmp_path, monkeypatch) -> None
 def test_failed_overwrite_preserves_existing_screenshot(tmp_path, monkeypatch) -> None:
     output = tmp_path / "existing.png"
     output.write_bytes(b"keep the previous capture")
-    monkeypatch.setattr(screenshots.shutil, "which", lambda _: "/usr/bin/spectacle")
+    monkeypatch.setattr(
+        screenshots, "screenshot_helper_path", lambda _env=None: "/usr/bin/kde-desktop-screenshot"
+    )
 
     def fake_run(argv, *, env, timeout):
         Path(argv[-1]).write_bytes(_png_image(1024, 768))
-        return CommandResult(tuple(argv), 0, "", "")
+        return CommandResult(tuple(argv), 0, '{"width": 1024, "height": 768, "scale": 1.0}', "")
 
     monkeypatch.setattr(screenshots, "run_command", fake_run)
 
@@ -121,10 +147,12 @@ def test_capture_rejects_unsafe_shared_output_directory(tmp_path, monkeypatch) -
     shared = tmp_path / "shared"
     shared.mkdir()
     shared.chmod(0o777)
-    monkeypatch.setattr(screenshots.shutil, "which", lambda _: "/usr/bin/spectacle")
+    monkeypatch.setattr(
+        screenshots, "screenshot_helper_path", lambda _env=None: "/usr/bin/kde-desktop-screenshot"
+    )
 
     def unexpected_run(*args, **kwargs):
-        raise AssertionError("must not invoke Spectacle")
+        raise AssertionError("must not invoke KWin Screenshot2")
 
     monkeypatch.setattr(screenshots, "run_command", unexpected_run)
 
@@ -140,7 +168,9 @@ def test_shared_output_parent_requires_trusted_sticky_directory() -> None:
 
 def test_capture_rejects_truncated_png_before_install(tmp_path, monkeypatch) -> None:
     output = tmp_path / "truncated.png"
-    monkeypatch.setattr(screenshots.shutil, "which", lambda _: "/usr/bin/spectacle")
+    monkeypatch.setattr(
+        screenshots, "screenshot_helper_path", lambda _env=None: "/usr/bin/kde-desktop-screenshot"
+    )
 
     def fake_run(argv, *, env, timeout):
         Path(argv[-1]).write_bytes(_png_image(10, 10)[:24])
@@ -155,7 +185,9 @@ def test_capture_rejects_truncated_png_before_install(tmp_path, monkeypatch) -> 
 
 def test_capture_rejects_invalid_compressed_image_data(tmp_path, monkeypatch) -> None:
     output = tmp_path / "invalid-idat.png"
-    monkeypatch.setattr(screenshots.shutil, "which", lambda _: "/usr/bin/spectacle")
+    monkeypatch.setattr(
+        screenshots, "screenshot_helper_path", lambda _env=None: "/usr/bin/kde-desktop-screenshot"
+    )
 
     def fake_run(argv, *, env, timeout):
         Path(argv[-1]).write_bytes(_png_image(10, 10, compressed_data=b"not-zlib"))

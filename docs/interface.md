@@ -364,8 +364,8 @@ capabilities remain explicit in result envelopes.
 
 The following block is a **conceptual future CLI sketch**, not a literal command
 reference. Its `--target` selector and several operations (such as display
-configuration, per-window screenshots, and semantic notification/application
-commands) are not implemented. The current CLI already has target-scoped
+configuration and semantic notification/application commands) are not
+implemented. The current CLI already has target-scoped
 `observe` and KWin frame placement through `window set-geometry`; see “What the
 current implementation can do” below for executable commands.
 
@@ -490,15 +490,19 @@ examples include `ambiguous_target`, `stale_target`, `unsupported`,
 `permission_denied`, and `backend_unavailable`. Reserve stderr and non-zero exit
 codes for failures; JSON mode should still emit the error envelope.
 
-Screenshots return capture metadata (target, geometry, and coordinate space) and
-are optionally saved to a requested path. The full-desktop capture uses
-Spectacle's fullscreen mode; `kde_screenshot_window` uses Spectacle's native
-active-window mode for the selected window ID rather than cropping the desktop.
-The target window is activated when needed, which can change focus on the live
-desktop; the capture includes window decorations. MCP returns image content so
-the agent can inspect it directly. Window-image pixel-to-logical-coordinate
-mapping is not currently provided; agents should use the window-targeted input
-operations rather than infer global coordinates from that image.
+Screenshots return capture metadata (target, geometry, scale, and coordinate
+space) and are optionally saved to a requested path. Full-desktop capture uses
+KWin Screenshot2 `CaptureWorkspace`; `kde_screenshot_window` calls
+`CaptureWindow` for the exact KWin UUID rather than cropping the desktop. It
+does not activate the target, so an inactive window can be captured without
+intentionally changing focus. Window decorations are included. Both calls use
+the narrowly scoped `kde-desktop-screenshot` native helper because KWin
+authorizes Screenshot2 through a desktop entry declaring the restricted
+interface; the Python CLI/MCP process is not authorized directly. MCP returns
+image content so the agent can inspect it. Window-image pixel-to-logical
+coordinate mapping is not currently provided; agents should use the
+window-targeted input operations rather than infer global coordinates from
+that image.
 
 ## Example agent loop
 
@@ -527,7 +531,7 @@ public model:
 | `kdocktor` | Display configuration/settings changes, where supported |
 | KWin fake-input Wayland protocol | Session-bound key/text/click submission for either target when its protocol version supports the operation; best-effort with no app-delivery acknowledgement |
 | `dotool` | Potential explicitly authorized live-desktop input only; its host-wide uinput device must not be used for private-session actions |
-| Spectacle | Screen/display/window capture when the installed version supports the requested target |
+| KWin Screenshot2 native helper | Full-workspace and exact-window capture through the restricted D-Bus API; the exact helper executable is authorized by its desktop entry |
 
 The exact command options and available actions should be detected and verified
 against the installed versions. Adapters should report their versions and
@@ -551,7 +555,7 @@ provider remains a separate optional adapter:
 ```json
 {
   "session_type": "wayland",
-  "backends": {"windows": "kdotool", "input": "dotool", "screenshots": "spectacle"},
+  "backends": {"windows": "kdotool", "input": "dotool", "screenshots": "kwin-screenshot2"},
   "operations": ["window.list", "window.focus", "input.click", "input.type", "screenshot.window"],
   "limitations": ["ui_element_tree_unavailable"]
 }
@@ -576,7 +580,8 @@ input had the intended effect.
 The stdio server exposes typed tools over `DesktopOperations`:
 `kde_desktop_observe`, `kde_pointer_position`, `kde_window_list`,
 `kde_window_find`, `kde_window_wait`, `kde_window_inspect`,
-`kde_window_activate`, `kde_window_set_minimized`, `kde_window_set_geometry`, `kde_input_key`,
+`kde_window_activate`, `kde_window_set_minimized`, `kde_window_set_geometry`,
+`kde_screenshot_window`, `kde_input_key`,
 `kde_input_type`, `kde_input_click`, `kde_input_click_at`, `kde_input_drag`,
 `kde_display_list`, `kde_media_list`, `kde_media_inspect`, `kde_media_control`,
 `kde_media_seek_to`,
@@ -589,8 +594,14 @@ do not apply. `kde_session_use` changes only the persisted CLI default. The
 server instructions repeat the selector rule and shared-UID lifecycle trust
 model to MCP clients. Domain errors retain stable error codes and structured
 details; both transports use a `schema_version` 1 envelope, and screenshot tools
-return PNG image content alongside target metadata when capture is available.
-`kde_desktop_observe` returns structured-only data when Spectacle is unavailable.
+return PNG image content alongside target metadata when the authorized native
+helper is available. `kde_desktop_observe` returns structured-only data when
+screenshot capture is unavailable.
+
+`operation_catalog.py` is the canonical mapping from each public
+`DesktopOperations` method to its CLI route and MCP tool. The parity test compares
+that catalog with the registered Typer and FastMCP surfaces, so new shared
+operations cannot silently ship on only one transport.
 
 No MCP tool accepts arbitrary shell commands. Launch is limited to argv in a
 managed private session, while observation, pointer readback, window targeting,
@@ -631,11 +642,10 @@ session ID and app IDs with values from the selected target. Set
 `TARGET='user-desktop'` only when explicitly opting into the physical desktop;
 otherwise use a managed private session ID. Inspect every result. A `window
 find` ambiguity is an error with candidate metadata, not a selection. The
-ordinary screenshot is the whole output. MCP also exposes
-`kde_screenshot_window` for direct per-window capture; it activates the selected
-window when needed. `kde_desktop_observe` returns the structured snapshot and
-full-desktop screenshot as image content; the CLI writes the optional screenshot
-to the path.
+ordinary screenshot is the whole output. Both CLI and MCP expose direct
+per-window capture through KWin Screenshot2; it does not activate the selected
+window. `kde_desktop_observe` returns the structured snapshot and full-desktop
+screenshot as image content; the CLI writes the optional screenshot to the path.
 For a private target, first create a running session and launch any apps inside
 it; the commands below cannot see host windows. Its home/browser profile is
 separate from the host's, so do not assume the ticket site is already signed in.

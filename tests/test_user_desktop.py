@@ -633,6 +633,7 @@ def test_live_capabilities_probe_window_service_and_report_focus_routing(
     backend, _commands = _backend(tmp_path, monkeypatch)
     monkeypatch.setattr(user_desktop, "fake_input_version", lambda _socket: 6)
     monkeypatch.setattr(user_desktop.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(user_desktop, "screenshot_helper_available", lambda _env=None: True)
 
     result = backend.capabilities()
 
@@ -689,7 +690,7 @@ def test_live_screenshot_reports_target_and_common_pixel_coordinate_space(
             "width": 1920,
             "height": 1080,
             "coordinate_space": "screenshot-pixels",
-            "source": "spectacle",
+            "source": "kwin-screenshot2",
         },
     )
 
@@ -699,26 +700,29 @@ def test_live_screenshot_reports_target_and_common_pixel_coordinate_space(
     assert result["coordinate_space"] == "screenshot-pixels"
 
 
-def test_live_active_window_screenshot_reports_native_capture_mode(
+def test_live_selected_window_screenshot_uses_requested_window_uuid(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     backend, _commands = _backend(tmp_path, monkeypatch)
+    window_id = "fd5cdb8a-60b7-4cf0-a8da-187c15b906fe"
     monkeypatch.setattr(
         user_desktop,
-        "capture_active_window",
-        lambda output, *, env, overwrite: {
+        "capture_window",
+        lambda output, *, window_id, env, overwrite: {
             "path": str(output),
             "width": 520,
             "height": 360,
-            "coordinate_space": "active-window-pixels",
-            "capture_mode": "active-window",
-            "source": "spectacle",
+            "coordinate_space": "screenshot-pixels",
+            "capture_mode": "window",
+            "window_id": window_id,
+            "source": "kwin-screenshot2",
         },
     )
 
-    result = backend.screenshot_active_window(tmp_path / "active-window.png")
+    result = backend.screenshot_window(window_id, tmp_path / "window.png")
 
-    assert result["target"] == {"kind": "user-desktop"}
+    assert result["target"] == {"kind": "user-desktop", "window_id": window_id}
     assert result["coordinate_space"] == "screenshot-pixels"
-    assert result["capture_mode"] == "active-window"
+    assert result["capture_mode"] == "window"
+    assert result["window_id"] == window_id

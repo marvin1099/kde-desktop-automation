@@ -681,3 +681,44 @@ def test_window_wait_cli_supports_borderless_display_coverage(monkeypatch) -> No
     data = json.loads(result.stdout)["data"]
     assert data["wait_condition"] == {"fills_display": True}
     assert data["matched_displays"] == ["DP-1"]
+
+
+def test_window_screenshot_cli_uses_shared_selected_window_operation(monkeypatch, tmp_path) -> None:
+    calls = []
+    output = tmp_path / "inactive-window.png"
+    window_id = "b5ff2329-3976-4c31-bf31-1538cb97c8f0"
+
+    class FakeOperations:
+        def __init__(self, session, **_kwargs):
+            self.session = session
+
+        def screenshot_window(self, selected_window_id, selected_output, *, overwrite=False):
+            calls.append((self.session, selected_window_id, selected_output, overwrite))
+            return {
+                "target": {"kind": self.session, "window_id": selected_window_id},
+                "path": str(selected_output),
+                "capture_mode": "window",
+                "focus_changed": False,
+            }
+
+    monkeypatch.setattr("kde_desktop_automation.cli.DesktopOperations", FakeOperations)
+    result = CliRunner().invoke(
+        app,
+        [
+            "--session",
+            "user-desktop",
+            "window",
+            "screenshot",
+            window_id,
+            "--output",
+            str(output),
+            "--overwrite",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert calls == [("user-desktop", window_id, output, True)]
+    payload = json.loads(result.stdout)
+    assert payload["data"]["target"]["window_id"] == window_id
+    assert payload["data"]["focus_changed"] is False

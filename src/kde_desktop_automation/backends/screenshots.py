@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
+import math
 import os
-import shutil
 import stat
 import struct
 import tempfile
@@ -11,6 +12,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any, BinaryIO, Literal
 
+from kde_desktop_automation.backends.screenshot_helper import screenshot_helper_path
 from kde_desktop_automation.errors import InteractionError
 from kde_desktop_automation.process import require_success, run_command
 
@@ -29,6 +31,7 @@ _ADAM7_PASSES = (
 _MAX_PNG_WIDTH = 7680
 _MAX_PNG_HEIGHT = 4320
 _MAX_PNG_PIXELS = 16_777_216
+_SCREENSHOT_TIMEOUT_SECONDS = 30.0
 
 
 def capture_fullscreen(
@@ -43,23 +46,25 @@ def capture_fullscreen(
         env=env,
         overwrite=overwrite,
         expected_size=expected_size,
-        mode="fullscreen",
+        mode="workspace",
     )
 
 
-def capture_active_window(
+def capture_window(
     output: Path,
     *,
+    window_id: str,
     env: Mapping[str, str],
     overwrite: bool = False,
 ) -> dict[str, Any]:
-    """Capture KWin's active window directly with Spectacle, not by cropping."""
+    """Capture one exact KWin window through the authorized Screenshot2 helper."""
     return _capture_screenshot(
         output,
         env=env,
         overwrite=overwrite,
         expected_size=None,
-        mode="active-window",
+        mode="window",
+        window_id=window_id,
     )
 
 
@@ -69,15 +74,21 @@ def _capture_screenshot(
     env: Mapping[str, str],
     overwrite: bool,
     expected_size: tuple[int, int] | None,
-    mode: Literal["fullscreen", "active-window"],
+    mode: Literal["workspace", "window"],
+    window_id: str | None = None,
 ) -> dict[str, Any]:
-    spectacle = shutil.which("spectacle")
-    if spectacle is None:
-        target_description = "private KWin output" if mode == "fullscreen" else "active window"
+    helper = screenshot_helper_path(env)
+    if helper is None:
+        target_description = "KWin Screenshot2 helper"
         raise InteractionError(
             "backend_unavailable",
-            f"Spectacle is required to capture the {target_description}.",
-            details={"executable": "spectacle"},
+            f"The native {target_description} is required to capture screenshots.",
+            details={"executable": "kde-desktop-screenshot"},
+        )
+    if mode == "window" and not window_id:
+        raise InteractionError(
+            "invalid_window_id",
+            "A window UUID is required for a selected-window screenshot.",
         )
 
     destination = output.expanduser().absolute()
@@ -127,22 +138,36 @@ def _capture_screenshot(
     temporary = Path(temporary_name)
 
     try:
-        spectacle_env = dict(env)
-        spectacle_env["QT_QPA_PLATFORM"] = "wayland"
+        command = [helper, "capture-workspace" if mode == "workspace" else "capture-window"]
+        if window_id is not None:
+            command.extend(("--window-id", window_id))
+        command.extend(("--output", str(temporary)))
         result = run_command(
-            [
-                spectacle,
-                "--background",
-                "--fullscreen" if mode == "fullscreen" else "--activewindow",
-                "--nonotify",
-                "--output",
-                str(temporary),
-            ],
-            env=spectacle_env,
-            timeout=20.0,
+            command,
+            env=env,
+            timeout=_SCREENSHOT_TIMEOUT_SECONDS,
         )
         require_success(result)
         width, height = _read_png_dimensions(temporary)
+        metadata = _parse_helper_metadata(result.stdout, mode=mode)
+        if (width, height) != (metadata["width"], metadata["height"]):
+            raise InteractionError(
+                "screenshot_metadata_mismatch",
+                "The Screenshot2 helper metadata did not match the captured PNG dimensions.",
+                details={
+                    "metadata": {"width": metadata["width"], "height": metadata["height"]},
+                    "png": {"width": width, "height": height},
+                },
+            )
+        if mode == "window" and metadata.get("window_id") not in (None, window_id):
+            raise InteractionError(
+                "screenshot_target_mismatch",
+                "KWin Screenshot2 returned a different window than the requested UUID.",
+                details={
+                    "requested_window_id": window_id,
+                    "captured_window_id": metadata["window_id"],
+                },
+            )
         if expected_size is not None and (width, height) != expected_size:
             raise InteractionError(
                 "screenshot_target_mismatch",
@@ -165,13 +190,64 @@ def _capture_screenshot(
         "width": width,
         "height": height,
         "coordinate_space": (
-            "private-output-pixels" if mode == "fullscreen" else "active-window-pixels"
+            "private-output-pixels" if expected_size is not None else "screenshot-pixels"
         ),
-        "source": "spectacle",
+        "scale": metadata["scale"],
+        "source": "kwin-screenshot2",
+        "api": "org.kde.KWin.ScreenShot2",
     }
-    if mode == "active-window":
-        capture["capture_mode"] = "active-window"
+    capture["capture_mode"] = mode
+    if window_id is not None:
+        capture["window_id"] = window_id
     return capture
+
+
+def _parse_helper_metadata(stdout: str, *, mode: Literal["workspace", "window"]) -> dict[str, Any]:
+    try:
+        metadata = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise InteractionError(
+            "screenshot_metadata_invalid",
+            "The KWin Screenshot2 helper returned invalid metadata.",
+            details={"reason": str(exc)},
+        ) from exc
+    if not isinstance(metadata, dict):
+        raise InteractionError(
+            "screenshot_metadata_invalid",
+            "The KWin Screenshot2 helper returned invalid metadata.",
+        )
+    width = metadata.get("width")
+    height = metadata.get("height")
+    scale = metadata.get("scale")
+    if (
+        type(width) is not int
+        or type(height) is not int
+        or width < 1
+        or height < 1
+        or not isinstance(scale, (int, float))
+        or isinstance(scale, bool)
+        or not math.isfinite(scale)
+        or scale <= 0
+    ):
+        raise InteractionError(
+            "screenshot_metadata_invalid",
+            "KWin Screenshot2 returned invalid dimensions or scale metadata.",
+            details={"metadata": metadata},
+        )
+    if (
+        mode == "window"
+        and metadata.get("window_id") is not None
+        and not isinstance(metadata["window_id"], str)
+    ):
+        raise InteractionError(
+            "screenshot_metadata_invalid",
+            "KWin Screenshot2 returned an invalid window identity.",
+        )
+    return {"width": width, "height": height, "scale": float(scale)} | (
+        {"window_id": metadata["window_id"]}
+        if mode == "window" and metadata.get("window_id") is not None
+        else {}
+    )
 
 
 def _install_screenshot(temporary: Path, destination: Path, *, overwrite: bool) -> None:
@@ -268,7 +344,7 @@ def _read_png_dimensions(path: Path) -> tuple[int, int]:
     except OSError as exc:
         raise InteractionError(
             "screenshot_read_failed",
-            "Could not read Spectacle's screenshot output.",
+            "Could not read KWin Screenshot2's screenshot output.",
             details={"path": str(path), "reason": str(exc)},
         ) from exc
 
@@ -304,7 +380,7 @@ def _check_chunk_crc(
 def _invalid_png(path: Path, reason: str) -> InteractionError:
     return InteractionError(
         "invalid_screenshot",
-        f"Spectacle output was not a complete, valid PNG image: {reason}",
+        f"KWin Screenshot2 output was not a complete, valid PNG image: {reason}",
         details={"path": str(path)},
     )
 

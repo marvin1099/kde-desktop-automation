@@ -6,6 +6,7 @@ import shutil
 from typing import Any
 
 from kde_desktop_automation import __version__
+from kde_desktop_automation.backends.screenshot_helper import screenshot_helper_path
 from kde_desktop_automation.backends.user_desktop import user_desktop_environment_issue
 from kde_desktop_automation.process import pidfd_supported
 
@@ -13,7 +14,7 @@ _TOOLS = (
     "kwin_wayland",
     "dbus-daemon",
     "wlpdisplays",
-    "spectacle",
+    "kde-desktop-screenshot",
     "kdotool",
     "dotool",
     "kdocktor",
@@ -25,10 +26,11 @@ _TOOLS = (
 
 def build_doctor_report() -> dict[str, Any]:
     tools = {name: shutil.which(name) for name in _TOOLS}
+    tools["kde-desktop-screenshot"] = screenshot_helper_path()
     kwin = tools["kwin_wayland"] is not None
     bus = tools["dbus-daemon"] is not None
     displays = tools["wlpdisplays"] is not None
-    spectacle = tools["spectacle"] is not None
+    screenshot_helper = tools["kde-desktop-screenshot"] is not None
     wayland_client = ctypes.util.find_library("wayland-client") is not None
     user_desktop_issue = user_desktop_environment_issue()
     if user_desktop_issue is None and tools["kdotool"] is None:
@@ -56,8 +58,8 @@ def build_doctor_report() -> dict[str, Any]:
             "backend": "kwin-virtual",
             "create": kwin and bus and displays and process_control,
             "display.inspect": displays,
-            "screenshot.capture": spectacle,
-            "screenshot.window.capture": None if spectacle else False,
+            "screenshot.capture": screenshot_helper,
+            "screenshot.window.capture": None if screenshot_helper else False,
             "session.stop": process_control,
             "window.list": False,
             "window.inspect": False,
@@ -88,8 +90,10 @@ def build_doctor_report() -> dict[str, Any]:
             "window.activate": None,
             "window.set_minimized": None,
             "window.capability_probe_performed": False,
-            "screenshot.capture": user_desktop_ready and spectacle,
-            "screenshot.window.capture": (None if user_desktop_ready and spectacle else False),
+            "screenshot.capture": user_desktop_ready and screenshot_helper,
+            "screenshot.window.capture": (
+                None if user_desktop_ready and screenshot_helper else False
+            ),
             "input.protocol_version": None,
             "input.key": None,
             "input.text": None,

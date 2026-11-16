@@ -12,6 +12,18 @@ permissions:
   contents: read
 
 jobs:
+  native-screenshot-helper:
+    name: Native Screenshot2 helper
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Qt 6 build dependencies
+        run: sudo apt-get update && sudo apt-get install -y qt6-base-dev
+      - name: Configure and build helper
+        run: |
+          cmake -S native/screenshot-helper -B build/screenshot-helper
+          cmake --build build/screenshot-helper --parallel 2
+
   test:
     name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest

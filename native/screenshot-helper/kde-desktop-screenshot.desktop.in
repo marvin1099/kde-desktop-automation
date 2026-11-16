@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=KDE Desktop Automation Screenshot Helper
+Comment=Capture screenshots through KWin Screenshot2
+Exec="@KDE_DESKTOP_SCREENSHOT_EXECUTABLE@"
+NoDisplay=true
+Terminal=false
+X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2;

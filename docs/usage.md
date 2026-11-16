@@ -28,6 +28,32 @@ uv run kde-desktop session screenshot SESSION_ID --output /tmp/agent-after.png
 uv run kde-desktop session stop SESSION_ID
 ```
 
+### KWin Screenshot2 helper
+
+All screenshots use KWin's `org.kde.KWin.ScreenShot2` D-Bus API through a small
+native Qt helper. Spectacle is not used. KWin restricts this API to registered
+executables, so the helper's desktop entry declares the restricted interface;
+the Python CLI/MCP process is deliberately not authorized. Install it in the
+user's local prefix (not system-wide):
+
+```bash
+# Debian/Ubuntu package names; use the matching Qt 6 development packages on other systems.
+sudo apt install cmake g++ qt6-base-dev
+cmake -S native/screenshot-helper -B build/screenshot-helper \
+  -DCMAKE_INSTALL_PREFIX="$HOME/.local"
+cmake --build build/screenshot-helper
+cmake --install build/screenshot-helper
+kbuildsycoca6 --noincremental
+```
+
+Make sure `$HOME/.local/bin` is in `PATH`. If it is not, set
+`KDE_DESKTOP_SCREENSHOT_HELPER="$HOME/.local/bin/kde-desktop-screenshot"` for
+the CLI/MCP process. Private sessions copy only the matching helper desktop
+entry into their isolated application home; they do not authorize Python or
+inherit the user's full application-data directory. Screenshot capabilities
+report helper presence but do not probe KWin's authorization until a capture is
+requested.
+
 `session create` prints the generated ID. The isolated session is not a
 security sandbox: it runs as the current Unix user, though with a private home
 and session bus. Do not run untrusted applications in it.
@@ -71,6 +97,8 @@ uv run kde-desktop --session agent-0123456789ab window list --json
 uv run kde-desktop --session user-desktop window list --json
 uv run kde-desktop --session user-desktop window find --title Kate --json
 uv run kde-desktop --session user-desktop screenshot --output /tmp/desktop.png
+uv run kde-desktop --session user-desktop window screenshot WINDOW_UUID \
+  --output /tmp/window.png --json
 ```
 
 `session create --default` makes a newly created private session the default;
@@ -148,7 +176,7 @@ screen index, the window under the pointer when known, and the matching display
 name. `observe` gathers window/display lists, active-window focus context,
 pointer context, and a fresh timestamped snapshot ID. Its screenshot is optional
 on the CLI (`--screenshot-output PATH`) and included as image content by the
-`kde_desktop_observe` MCP tool when Spectacle is available. A single-display
+`kde_desktop_observe` MCP tool when the authorized Screenshot2 helper is available. A single-display
 capture includes an explicit
 screenshot-pixel to logical-desktop mapping; a composite multi-display capture
 is reported as unmapped. Neither surface exposes focused child controls or an
@@ -364,7 +392,7 @@ affect the user's real devices.
 The stdio MCP server exposes the same observation, window, pointer/input,
 display, MPRIS media, PipeWire audio, screenshot, and capability operations,
 plus private-session lifecycle tools. `kde_desktop_observe` returns a structured
-snapshot and screenshot image content when Spectacle is available;
+snapshot and screenshot image content when the authorized Screenshot2 helper is available;
 `kde_pointer_position` reads the pointer;
 `kde_window_set_geometry` sets and verifies a KWin frame rectangle.
 Install the project with `uv sync`, then configure your MCP client to launch
@@ -395,10 +423,10 @@ cross-session use but is not an authorization boundary. Existing MCP callers
 that omitted `session` must be updated; CLI default-session behavior is unchanged.
 
 `kde_screenshot` captures the full selected desktop. `kde_screenshot_window`
-captures one exact window with Spectacle's native active-window mode (not a crop),
-activating it first if necessary. That can change focus on `user-desktop`; the
-result includes the selected window and reports whether focus was changed.
-Both tools return target/session metadata and PNG image content. Session
+uses KWin Screenshot2 to capture the exact selected UUID (not a crop) without
+activating it, including when the target is inactive. The result includes the
+selected window and reports observed focus changes. Both tools return
+target/session metadata and PNG image content. Session
 creation/launch/stop tools operate only on managed private sessions; launch
 takes an argv array and never evaluates a shell command. MCP clients sharing
 the server still share the Unix user's authority to list, launch, and stop
@@ -421,8 +449,9 @@ IDs. Input remains best-effort and must be independently verified.
   desktop's KWin D-Bus service.
 - Live `user-desktop` operations currently require KDE on Wayland, `kdotool`, a
   reachable KWin D-Bus service, and (for input) a compatible KWin fake-input
-  protocol. `capabilities` probes window discovery/D-Bus, while display and
-  screenshot availability are based on executable presence. X11 and persistent
+  protocol. `capabilities` probes window discovery/D-Bus, while screenshot
+  availability reports the native helper's presence; its desktop-entry
+  authorization is checked by KWin only when a capture is requested. X11 and persistent
   attach/detach are not implemented.
 - Window-level input still uses coordinates and current focus; there is no
   accessibility element tree or app-level “click Play All” operation. Recheck
@@ -435,7 +464,7 @@ IDs. Input remains best-effort and must be independently verified.
   state behind, the CLI warns and preserves it for manual cleanup.
 
 The private session has been smoke-tested on Plasma 6.8 with `kwin_wayland
---virtual`: `wlpdisplays` sees the virtual output, Spectacle captures it, and
+--virtual`: `wlpdisplays` sees the virtual output, KWin Screenshot2 captures it, and
 Kate accepts KWin fake-input keyboard and pointer events; a file was typed and
 saved, then independently read back. A separate, explicitly scoped manual test
 also saved a dedicated Kate test file through the live KWin socket on this
@@ -463,6 +492,18 @@ lists and inspects windows; it sends no input:
 ```bash
 KDE_DESKTOP_RUN_KWIN_INTEGRATION=1 uv run pytest tests/test_kwin_integration.py -q
 KDE_DESKTOP_RUN_USER_DESKTOP_INTEGRATION=1 uv run pytest tests/test_user_desktop_integration.py -q
+```
+
+The Screenshot2 integration test is separately gated and uses only a private
+KWin session. Build the helper and its test window first; the test registers the
+helper entry only inside its disposable private home and verifies an inactive
+window capture leaves the other active window focused:
+
+```bash
+KDE_DESKTOP_RUN_KWIN_SCREENSHOT_INTEGRATION=1 \
+KDE_DESKTOP_SCREENSHOT_HELPER="$PWD/build/screenshot-helper/kde-desktop-screenshot" \
+KDE_DESKTOP_SCREENSHOT_TEST_WINDOW="$PWD/build/screenshot-helper/kde-desktop-screenshot-test-window" \
+uv run pytest tests/test_kwin_integration.py::test_private_kwin_captures_inactive_window_without_changing_focus -q
 ```
 
 The real Dolphin-to-Kate drop test is additionally gated because it launches

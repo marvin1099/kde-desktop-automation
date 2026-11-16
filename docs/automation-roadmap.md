@@ -70,17 +70,17 @@ Prioritize improvements in this order:
    bounded, cancellable wait materially improves a workflow. Keep long-running
    watchers opt-in and outside basic list/inspect calls.
 
-## Future candidate: non-activating window screenshots
+## Implemented: non-activating Screenshot2 capture
 
-The current `kde_screenshot_window` path activates an inactive target so
-Spectacle's active-window mode can capture it. KWin's
-`org.kde.KWin.ScreenShot2.CaptureWindow` API may support capturing a selected
-window by UUID without raising it, but access is restricted to authorized
-executables with a trusted desktop entry declaring the interface. The Python
-MCP process should not bypass that check. Revisit this only with a narrowly
-scoped native helper (or upstream Spectacle support) and verify compositor/API
-availability, D-Bus authorization, minimized/occluded-window behavior, and
-image metadata before exposing a no-focus operation.
+Full-desktop and exact-window screenshots use KWin's
+`org.kde.KWin.ScreenShot2` API through the narrowly scoped
+`kde-desktop-screenshot` Qt helper. `CaptureWindow` targets the UUID directly
+without activating the window. KWin's restricted-interface authorization is
+preserved through the helper's desktop entry; the Python process is not
+authorized. The opt-in private-KWin integration test verifies valid image
+metadata and unchanged focus while capturing an inactive window. Minimized and
+occluded-window behavior and richer pixel/logical-coordinate scale mapping are
+not yet guaranteed.
 
 ## Future candidate: UI control discovery
 

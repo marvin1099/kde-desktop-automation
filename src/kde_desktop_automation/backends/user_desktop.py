@@ -33,9 +33,10 @@ from kde_desktop_automation.backends.kwin_input import (
     validate_drag_steps,
     validate_drag_timing,
 )
+from kde_desktop_automation.backends.screenshot_helper import screenshot_helper_available
 from kde_desktop_automation.backends.screenshots import (
-    capture_active_window,
     capture_fullscreen,
+    capture_window,
 )
 from kde_desktop_automation.errors import InteractionError
 from kde_desktop_automation.process import require_executable, require_success, run_command
@@ -517,17 +518,25 @@ class UserDesktopBackend:
             ),
         }
 
-    def screenshot_active_window(
+    def screenshot_window(
         self,
+        window_id: str,
         output: Path,
         *,
         overwrite: bool = False,
     ) -> dict[str, Any]:
-        capture = capture_active_window(output, env=self.environ, overwrite=overwrite)
+        capture = capture_window(
+            output,
+            window_id=window_id,
+            env=self.environ,
+            overwrite=overwrite,
+        )
         return capture | {
-            "target": {"kind": "user-desktop"},
+            "target": {"kind": "user-desktop", "window_id": window_id},
             "coordinate_space": "screenshot-pixels",
-            "note": "Spectacle captures the active window directly, including its decorations.",
+            "note": (
+                "KWin Screenshot2 captures the selected window directly, including decorations."
+            ),
         }
 
     def capabilities(self) -> dict[str, Any]:
@@ -563,9 +572,9 @@ class UserDesktopBackend:
                 "desktop.observe": window_available and shutil.which("wlpdisplays") is not None,
                 "input.pointer_position": shutil.which("kdotool") is not None,
                 "display.inspect": shutil.which("wlpdisplays") is not None,
-                "screenshot.capture": shutil.which("spectacle") is not None,
+                "screenshot.capture": screenshot_helper_available(self.environ),
                 "screenshot.window.capture": window_available
-                and shutil.which("spectacle") is not None,
+                and screenshot_helper_available(self.environ),
                 "input.key": key_available,
                 "input.text": key_available,
                 "input.click": click_available,
@@ -607,7 +616,10 @@ class UserDesktopBackend:
             "capability_probe": {
                 "window_management": "read-only window listing and KWin D-Bus metadata query",
                 "display": "wlpdisplays executable presence only",
-                "screenshot": "Spectacle executable presence only",
+                "screenshot": (
+                    "KWin Screenshot2 helper presence only; restricted D-Bus authorization "
+                    "is not probed"
+                ),
             },
             "window_reason": window_reason,
             "limitations": [
