@@ -29,6 +29,16 @@ SHARED_OPERATION_CATALOG = (
         "kde_window_set_minimized",
     ),
     OperationSurface(
+        "window_set_fullscreen",
+        ("window", "set-fullscreen"),
+        "kde_window_set_fullscreen",
+    ),
+    OperationSurface(
+        "window_set_maximized",
+        ("window", "set-maximized"),
+        "kde_window_set_maximized",
+    ),
+    OperationSurface(
         "window_set_geometry",
         ("window", "set-geometry"),
         "kde_window_set_geometry",

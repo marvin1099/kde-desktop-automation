@@ -68,6 +68,8 @@ def build_doctor_report() -> dict[str, Any]:
             "window.inspect": False,
             "window.activate": False,
             "window.set_minimized": False,
+            "window.set_fullscreen": False,
+            "window.set_maximized": False,
             "window.protocol_probe_available": kwin and wayland_client,
             "input.active_window_guard": False,
             "input.global_click": False,
@@ -92,6 +94,8 @@ def build_doctor_report() -> dict[str, Any]:
             "window.inspect": None,
             "window.activate": None,
             "window.set_minimized": None,
+            "window.set_fullscreen": None,
+            "window.set_maximized": None,
             "window.capability_probe_performed": False,
             "screenshot.capture": user_desktop_ready and screenshot_helper_ready,
             "screenshot.window.capture": (

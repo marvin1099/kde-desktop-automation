@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from kde_desktop_automation.backends.displays import DisplayInfo
 from kde_desktop_automation.backends.kwin_input import (
@@ -102,6 +102,20 @@ class SessionBackend(Protocol):
         session: SessionRecord,
         window_id: str,
         minimized: bool,
+    ) -> dict[str, Any]: ...
+
+    def set_window_fullscreen(
+        self,
+        session: SessionRecord,
+        window_id: str,
+        fullscreen: bool,
+    ) -> dict[str, Any]: ...
+
+    def set_window_maximized(
+        self,
+        session: SessionRecord,
+        window_id: str,
+        maximized: bool,
     ) -> dict[str, Any]: ...
 
     def set_window_geometry(
@@ -644,6 +658,78 @@ class SessionManager:
             "verified": True,
             "window": window,
             "note": "Minimized state is scoped to this private KWin session.",
+        }
+
+    def set_window_fullscreen(
+        self,
+        session_id: str,
+        window_id: str,
+        fullscreen: bool,
+    ) -> dict[str, Any]:
+        return self._set_window_boolean_state(
+            session_id,
+            window_id,
+            state="fullscreen",
+            enabled=fullscreen,
+        )
+
+    def set_window_maximized(
+        self,
+        session_id: str,
+        window_id: str,
+        maximized: bool,
+    ) -> dict[str, Any]:
+        return self._set_window_boolean_state(
+            session_id,
+            window_id,
+            state="maximized",
+            enabled=maximized,
+        )
+
+    def _set_window_boolean_state(
+        self,
+        session_id: str,
+        window_id: str,
+        *,
+        state: Literal["fullscreen", "maximized"],
+        enabled: bool,
+    ) -> dict[str, Any]:
+        if not isinstance(enabled, bool):
+            raise InteractionError(
+                "invalid_window_state",
+                f"{state.capitalize()} state must be explicitly true or false.",
+                details={state: enabled},
+            )
+        record = self._require_window_management(session_id)
+        result = (
+            self.backend.set_window_fullscreen(record, window_id, enabled)
+            if state == "fullscreen"
+            else self.backend.set_window_maximized(record, window_id, enabled)
+        )
+        if result.get("verified") is not True:
+            raise InteractionError(
+                "window_state_unverified",
+                f"The private KWin backend did not verify the requested {state} state.",
+                details={
+                    "session_id": session_id,
+                    "window_id": window_id,
+                    "requested_state": state,
+                    "enabled": enabled,
+                    "result": result,
+                },
+            )
+        return {
+            "target": {"kind": "agent-session", "session_id": session_id, "window_id": window_id},
+            "action": f"set-{state}",
+            state: enabled,
+            "changed": result.get("changed") is True,
+            "verified": True,
+            "focus_changed": result.get("focus_changed") is True,
+            "window": result["window"],
+            "note": (
+                f"{state.capitalize()} state is scoped to this private KWin session; "
+                "minimized or conflicting fullscreen/maximized state must be restored first."
+            ),
         }
 
     def set_window_geometry(

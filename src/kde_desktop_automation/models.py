@@ -151,6 +151,8 @@ class SessionRecord:
                 "window.inspect": window_management_available,
                 "window.activate": window_management_available,
                 "window.set_minimized": window_management_available,
+                "window.set_fullscreen": window_management_available,
+                "window.set_maximized": window_management_available,
                 "window.set_geometry": window_management_available and kdotool_available,
                 "desktop.observe": window_management_available,
                 "input.pointer_position": kdotool_available,

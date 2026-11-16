@@ -72,6 +72,14 @@ class FakeManager:
         self.calls.append(("set_window_minimized", session_id, window_id, minimized))
         return {"target": {"kind": "agent-session", "session_id": session_id}}
 
+    def set_window_fullscreen(self, session_id: str, window_id: str, fullscreen: bool):
+        self.calls.append(("set_window_fullscreen", session_id, window_id, fullscreen))
+        return {"target": {"kind": "agent-session", "session_id": session_id}}
+
+    def set_window_maximized(self, session_id: str, window_id: str, maximized: bool):
+        self.calls.append(("set_window_maximized", session_id, window_id, maximized))
+        return {"target": {"kind": "agent-session", "session_id": session_id}}
+
     def set_window_geometry(self, session_id, window_id, x, y, width, height):
         self.calls.append(("set_window_geometry", session_id, window_id, x, y, width, height))
         return {"target": {"kind": "agent-session", "session_id": session_id}}
@@ -132,6 +140,14 @@ class FakeUserDesktop:
 
     def set_window_minimized(self, window_id: str, minimized: bool) -> dict[str, Any]:
         self.calls.append(("set_window_minimized", window_id, minimized))
+        return {"target": {"kind": "user-desktop", "window_id": window_id}}
+
+    def set_window_fullscreen(self, window_id: str, fullscreen: bool) -> dict[str, Any]:
+        self.calls.append(("set_window_fullscreen", window_id, fullscreen))
+        return {"target": {"kind": "user-desktop", "window_id": window_id}}
+
+    def set_window_maximized(self, window_id: str, maximized: bool) -> dict[str, Any]:
+        self.calls.append(("set_window_maximized", window_id, maximized))
         return {"target": {"kind": "user-desktop", "window_id": window_id}}
 
     def set_window_geometry(self, window_id, x, y, width, height):
@@ -271,6 +287,32 @@ def test_global_pointer_and_minimize_operations_use_the_explicit_live_target() -
         ("click_at", -400, 250, "left"),
         ("drag_at", 10, 20, 30, 40, "left", 4, 750, 100, 250),
         ("set_window_minimized", "window-uuid", True),
+    ]
+
+
+def test_fullscreen_and_maximize_operations_use_explicit_desired_states() -> None:
+    live_desktop = FakeUserDesktop()
+    operations = DesktopOperations("user-desktop", user_desktop=live_desktop)  # type: ignore[arg-type]
+
+    operations.window_set_fullscreen("window-uuid", True)
+    operations.window_set_fullscreen("window-uuid", False)
+    operations.window_set_maximized("window-uuid", True)
+    operations.window_set_maximized("window-uuid", False)
+
+    manager = FakeManager()
+    private_operations = DesktopOperations("agent-123456789abc", manager=manager)  # type: ignore[arg-type]
+    private_operations.window_set_fullscreen("window-uuid", False)
+    private_operations.window_set_maximized("window-uuid", True)
+
+    assert live_desktop.calls == [
+        ("set_window_fullscreen", "window-uuid", True),
+        ("set_window_fullscreen", "window-uuid", False),
+        ("set_window_maximized", "window-uuid", True),
+        ("set_window_maximized", "window-uuid", False),
+    ]
+    assert manager.calls == [
+        ("set_window_fullscreen", "agent-123456789abc", "window-uuid", False),
+        ("set_window_maximized", "agent-123456789abc", "window-uuid", True),
     ]
 
 

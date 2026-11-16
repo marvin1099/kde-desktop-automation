@@ -162,6 +162,12 @@ advertises protocol v13 or newer; capabilities are recorded per session.
 `window set-minimized WINDOW_ID minimized|restored` sets and verifies the
 desired state on either target. It is reversible; changing state on the live
 desktop may change focus.
+`window set-fullscreen WINDOW_ID fullscreen|restored` and
+`window set-maximized WINDOW_ID maximized|restored` provide the same explicit
+desired-state behavior. Each request is checked against a fresh KWin readback;
+the readback wait is bounded. Restore a minimized window and clear the other
+fullscreen/maximized state before enabling one of these states. On
+`user-desktop`, these operations affect the real workspace and may change focus.
 
 `window set-geometry WINDOW_ID X Y WIDTH HEIGHT` sets a KWin **frame** rectangle
 in logical desktop pixels, then reads it back and returns both the request and
@@ -217,6 +223,10 @@ kde-desktop --session user-desktop input click-at --json -- -320 240
 kde-desktop --session user-desktop input drag --steps 48 --duration-ms 1500 --hold-ms 250 --end-pause-ms 500 --json -- -320 240 700 480
 kde-desktop --session user-desktop window set-minimized WINDOW_ID minimized --json
 kde-desktop --session user-desktop window set-minimized WINDOW_ID restored --json
+kde-desktop --session user-desktop window set-fullscreen WINDOW_ID fullscreen --json
+kde-desktop --session user-desktop window set-fullscreen WINDOW_ID restored --json
+kde-desktop --session user-desktop window set-maximized WINDOW_ID maximized --json
+kde-desktop --session user-desktop window set-maximized WINDOW_ID restored --json
 ```
 
 The generic drag path was exercised in a hidden session by dragging a test file

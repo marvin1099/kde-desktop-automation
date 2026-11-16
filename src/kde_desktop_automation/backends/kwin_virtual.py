@@ -47,6 +47,9 @@ from kde_desktop_automation.backends.kwin_window_management import (
 from kde_desktop_automation.backends.kwin_window_management import (
     set_minimized_window as set_private_window_minimized,
 )
+from kde_desktop_automation.backends.kwin_window_management import (
+    set_window_state as set_private_window_state,
+)
 from kde_desktop_automation.backends.screenshot_helper import copy_private_screenshot_registration
 from kde_desktop_automation.backends.screenshots import (
     capture_fullscreen,
@@ -457,6 +460,48 @@ class KWinVirtualBackend:
                 details={"session_id": session.session_id, "window_id": window_id},
             )
         return cast(dict[str, Any], result["window"])
+
+    def set_window_fullscreen(
+        self,
+        session: SessionRecord,
+        window_id: str,
+        fullscreen: bool,
+    ) -> dict[str, Any]:
+        self._require_running(session)
+        result = set_private_window_state(
+            Path(session.runtime_dir) / session.wayland_display,
+            window_id,
+            state="fullscreen",
+            enabled=fullscreen,
+        )
+        if result["verified"] is not True:
+            raise InteractionError(
+                "window_state_unverified",
+                "Private KWin did not report the requested fullscreen state.",
+                details={"window_id": window_id, "fullscreen": fullscreen, "readback": result},
+            )
+        return result
+
+    def set_window_maximized(
+        self,
+        session: SessionRecord,
+        window_id: str,
+        maximized: bool,
+    ) -> dict[str, Any]:
+        self._require_running(session)
+        result = set_private_window_state(
+            Path(session.runtime_dir) / session.wayland_display,
+            window_id,
+            state="maximized",
+            enabled=maximized,
+        )
+        if result["verified"] is not True:
+            raise InteractionError(
+                "window_state_unverified",
+                "Private KWin did not report the requested maximized state.",
+                details={"window_id": window_id, "maximized": maximized, "readback": result},
+            )
+        return result
 
     def set_window_geometry(
         self,

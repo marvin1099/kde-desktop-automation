@@ -561,6 +561,42 @@ def test_window_minimize_is_explicit_and_verified_by_readback(
     assert result["verified"] is True
 
 
+@pytest.mark.parametrize(
+    ("state", "enabled"),
+    [("fullscreen", True), ("fullscreen", False), ("maximized", True), ("maximized", False)],
+)
+def test_window_fullscreen_and_maximize_use_state_request_with_readback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    state: str,
+    enabled: bool,
+) -> None:
+    backend, _commands = _backend(tmp_path, monkeypatch)
+    requests: list[tuple[Path, str, str, bool]] = []
+
+    def request(socket_path: Path, window_id: str, *, state: str, enabled: bool):
+        requests.append((socket_path, window_id, state, enabled))
+        return {
+            "window": {"window_id": window_id, state: enabled, "active": True},
+            "changed": True,
+            "verified": True,
+            "focus_changed": False,
+        }
+
+    monkeypatch.setattr(user_desktop, "set_kwin_window_state", request)
+
+    result = (
+        backend.set_window_fullscreen(WINDOW_ID, enabled)
+        if state == "fullscreen"
+        else backend.set_window_maximized(WINDOW_ID, enabled)
+    )
+
+    assert requests == [(backend.socket_path, WINDOW_ID, state, enabled)]
+    assert result[state] is enabled
+    assert result["verified"] is True
+    assert result["window"][state] is enabled
+
+
 def test_window_geometry_uses_kdotool_and_verifies_frame_readback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -632,6 +668,7 @@ def test_live_capabilities_probe_window_service_and_report_focus_routing(
 ) -> None:
     backend, _commands = _backend(tmp_path, monkeypatch)
     monkeypatch.setattr(user_desktop, "fake_input_version", lambda _socket: 6)
+    monkeypatch.setattr(user_desktop, "window_management_version", lambda _socket: 22)
     monkeypatch.setattr(user_desktop.shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(user_desktop, "screenshot_helper_ready", lambda _env=None: True)
 
@@ -645,6 +682,8 @@ def test_live_capabilities_probe_window_service_and_report_focus_routing(
     assert result["capabilities"]["input.global_click"] is True
     assert result["capabilities"]["input.global_drag"] is True
     assert result["capabilities"]["window.set_minimized"] is True
+    assert result["capabilities"]["window.set_fullscreen"] is True
+    assert result["capabilities"]["window.set_maximized"] is True
     assert result["capabilities"]["window.set_geometry"] is True
     assert result["capabilities"]["input.pointer_position"] is True
     assert result["capabilities"]["desktop.observe"] is True
@@ -656,6 +695,20 @@ def test_live_capabilities_probe_window_service_and_report_focus_routing(
     assert result["capabilities"]["audio.route_stream"] is True
     assert result["input_semantics"]["atomic_window_routing"] is False
     assert result["window_reason"] is None
+
+
+def test_live_state_controls_are_unavailable_below_window_management_protocol_v13(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, _commands = _backend(tmp_path, monkeypatch)
+    monkeypatch.setattr(user_desktop, "window_management_version", lambda _socket: 12)
+
+    result = backend.capabilities()
+
+    assert result["capabilities"]["window.list"] is True
+    assert result["capabilities"]["window.set_fullscreen"] is False
+    assert result["capabilities"]["window.set_maximized"] is False
 
 
 def test_live_capabilities_report_unavailable_window_metadata_service(

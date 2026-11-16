@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import ctypes
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from kde_desktop_automation.backends.kwin_input import _WaylandConnection, _WlInterface, _WlMessage
 from kde_desktop_automation.errors import InteractionError
@@ -25,6 +26,8 @@ _STATE_MOVABLE = 0x8000
 _STATE_RESIZABLE = 0x10000
 _MINIMUM_UUID_VERSION = 13
 _MAX_WINDOWS = 2048
+_WINDOW_STATE_READBACK_TIMEOUT_SECONDS = 1.0
+_WINDOW_STATE_READBACK_INTERVAL_SECONDS = 0.05
 
 
 def _interface(name: bytes, version: int) -> _WlInterface:
@@ -208,6 +211,9 @@ class _Window:
             "fullscreen": bool(state & _STATE_FULLSCREEN),
             "minimized": bool(state & _STATE_MINIMIZED),
             "maximized": bool(state & _STATE_MAXIMIZED),
+            "minimizable": bool(state & _STATE_MINIMIZABLE),
+            "maximizable": bool(state & _STATE_MAXIMIZABLE),
+            "fullscreenable": bool(state & _STATE_FULLSCREENABLE),
             "active": bool(state & _STATE_ACTIVE),
             "has_transient_parent": self.has_transient_parent,
             "desktops": sorted(self.desktops),
@@ -263,6 +269,12 @@ class KWinWindowManagementClient:
     def windows(self) -> list[dict[str, Any]]:
         return [window.to_dict() for window in self._windows.values() if window.initialized]
 
+    def refresh(self) -> None:
+        """Complete another compositor roundtrip so asynchronous state changes arrive."""
+        self._connection.roundtrip()
+        if self._callback_error is not None:
+            raise self._callback_error
+
     def activate(self, window_id: str) -> None:
         normalized = _normalize_uuid(window_id)
         window = self._windows.get(normalized)
@@ -316,8 +328,53 @@ class KWinWindowManagementClient:
             None,
             self.window_version,
             0,
-            ctypes.c_uint32(_STATE_MINIMIZED if minimized else 0),
             ctypes.c_uint32(_STATE_MINIMIZED),
+            ctypes.c_uint32(_STATE_MINIMIZED if minimized else 0),
+        )
+        self._connection.roundtrip()
+        if self._callback_error is not None:
+            raise self._callback_error
+
+    def set_fullscreen(self, window_id: str, fullscreen: bool) -> None:
+        self._set_boolean_window_state(window_id, "fullscreen", _STATE_FULLSCREEN, fullscreen)
+
+    def set_maximized(self, window_id: str, maximized: bool) -> None:
+        self._set_boolean_window_state(window_id, "maximized", _STATE_MAXIMIZED, maximized)
+
+    def _set_boolean_window_state(
+        self,
+        window_id: str,
+        name: Literal["fullscreen", "maximized"],
+        flag: int,
+        enabled: bool,
+    ) -> None:
+        normalized = _normalize_uuid(window_id)
+        window = self._windows.get(normalized)
+        if window is None or not window.initialized:
+            raise InteractionError(
+                "stale_target",
+                "The selected window no longer exists in the selected KWin session.",
+                details={"window_id": normalized},
+            )
+        if not isinstance(enabled, bool):
+            raise InteractionError(
+                "invalid_window_state",
+                f"{name.capitalize()} state must be explicitly true or false.",
+                details={name: enabled},
+            )
+        if self.window_version < 1:
+            raise InteractionError(
+                "window_capability_unavailable",
+                "The selected KWin session does not support window-state requests.",
+            )
+        self._connection.lib.wl_proxy_marshal_flags(
+            window.proxy,
+            0,
+            None,
+            self.window_version,
+            0,
+            ctypes.c_uint32(flag),
+            ctypes.c_uint32(flag if enabled else 0),
         )
         self._connection.roundtrip()
         if self._callback_error is not None:
@@ -619,6 +676,83 @@ def set_minimized_window(
         return {
             "window": result_window,
             "minimized_verified": result_window.get("minimized") is minimized,
+        }
+
+
+def set_window_state(
+    socket_path: Path,
+    window_id: str,
+    *,
+    state: Literal["fullscreen", "maximized"],
+    enabled: bool,
+) -> dict[str, Any]:
+    """Set one explicit fullscreen/maximized state and return its verified result."""
+    if state not in {"fullscreen", "maximized"}:
+        raise InteractionError(
+            "invalid_window_state",
+            "Only fullscreen and maximized states can be changed through this operation.",
+            details={"state": state},
+        )
+    if not isinstance(enabled, bool):
+        raise InteractionError(
+            "invalid_window_state",
+            f"{state.capitalize()} state must be explicitly true or false.",
+            details={state: enabled},
+        )
+
+    normalized_id = _normalize_uuid(window_id)
+    with KWinWindowManagementClient(socket_path) as client:
+        before = {item["window_id"]: item for item in client.windows()}
+        window = before.get(normalized_id)
+        if window is None:
+            raise InteractionError(
+                "stale_target",
+                "The selected window no longer exists in the selected KWin session.",
+                details={"window_id": normalized_id},
+            )
+        if enabled:
+            conflict_state = "maximized" if state == "fullscreen" else "fullscreen"
+            if window.get("minimized") is True or window.get(conflict_state) is True:
+                raise InteractionError(
+                    "window_state_conflict",
+                    f"Restore the minimized or {conflict_state} state before enabling {state}.",
+                    details={
+                        "window_id": normalized_id,
+                        "requested_state": state,
+                        "minimized": window.get("minimized"),
+                        conflict_state: window.get(conflict_state),
+                    },
+                )
+        if window.get(state) is not enabled:
+            if state == "fullscreen":
+                client.set_fullscreen(normalized_id, enabled)
+            else:
+                client.set_maximized(normalized_id, enabled)
+
+        deadline = time.monotonic() + _WINDOW_STATE_READBACK_TIMEOUT_SECONDS
+        result_window: dict[str, Any] | None = None
+        while True:
+            client.refresh()
+            after = {item["window_id"]: item for item in client.windows()}
+            result_window = after.get(normalized_id)
+            if result_window is None or result_window.get(state) is enabled:
+                break
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(_WINDOW_STATE_READBACK_INTERVAL_SECONDS)
+        if result_window is None:
+            raise InteractionError(
+                "stale_target",
+                "The selected window closed while KWin changed its state.",
+                details={"window_id": normalized_id, "requested_state": state},
+            )
+        return {
+            "window": result_window,
+            "state": state,
+            "enabled": enabled,
+            "changed": window.get(state) is not result_window.get(state),
+            "verified": result_window.get(state) is enabled,
+            "focus_changed": window.get("active") is not result_window.get("active"),
         }
 
 

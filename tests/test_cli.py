@@ -16,6 +16,8 @@ def test_doctor_json_requires_explicit_user_desktop_commands() -> None:
     assert report["data"]["user_desktop"]["explicit_command_required"] is True
     assert report["data"]["user_desktop"]["window.list"] is None
     assert report["data"]["user_desktop"]["window.capability_probe_performed"] is False
+    assert report["data"]["user_desktop"]["window.set_fullscreen"] is None
+    assert report["data"]["user_desktop"]["window.set_maximized"] is None
     assert report["data"]["safety"]["silent_fallback_to_user_desktop"] is False
     assert report["data"]["safety"]["explicit_user_desktop_command_required"] is True
     assert report["data"]["agent_session"]["input.inject"] is False
@@ -164,6 +166,14 @@ def test_global_pointer_and_window_state_cli_use_explicit_selected_target(monkey
             calls.append(("minimize", self.session, window_id, minimized))
             return {"target": {"kind": self.session}, "minimized": minimized}
 
+        def window_set_fullscreen(self, window_id, fullscreen):
+            calls.append(("fullscreen", self.session, window_id, fullscreen))
+            return {"target": {"kind": self.session}, "fullscreen": fullscreen}
+
+        def window_set_maximized(self, window_id, maximized):
+            calls.append(("maximized", self.session, window_id, maximized))
+            return {"target": {"kind": self.session}, "maximized": maximized}
+
         def window_set_geometry(self, window_id, x, y, width, height):
             calls.append(("geometry", self.session, window_id, x, y, width, height))
             return {"target": {"kind": self.session}, "verified": True}
@@ -231,6 +241,30 @@ def test_global_pointer_and_window_state_cli_use_explicit_selected_target(monkey
             "--json",
         ],
     )
+    fullscreen = runner.invoke(
+        app,
+        [
+            "--session",
+            "user-desktop",
+            "window",
+            "set-fullscreen",
+            "window-uuid",
+            "fullscreen",
+            "--json",
+        ],
+    )
+    maximized = runner.invoke(
+        app,
+        [
+            "--session",
+            "user-desktop",
+            "window",
+            "set-maximized",
+            "window-uuid",
+            "restored",
+            "--json",
+        ],
+    )
     geometry = runner.invoke(
         app,
         [
@@ -261,6 +295,8 @@ def test_global_pointer_and_window_state_cli_use_explicit_selected_target(monkey
     assert live_alias_minimize.exit_code == 0, (
         live_alias_minimize.stdout + live_alias_minimize.stderr
     )
+    assert fullscreen.exit_code == 0, fullscreen.stdout + fullscreen.stderr
+    assert maximized.exit_code == 0, maximized.stdout + maximized.stderr
     assert geometry.exit_code == 0, geometry.stdout + geometry.stderr
     assert pointer.exit_code == 0, pointer.stdout + pointer.stderr
     assert observation.exit_code == 0, observation.stdout + observation.stderr
@@ -269,6 +305,8 @@ def test_global_pointer_and_window_state_cli_use_explicit_selected_target(monkey
         ("drag", "user-desktop", -10, 20, 40, 60, "left", 4, 750, 100, 250),
         ("minimize", "user-desktop", "window-uuid", True),
         ("minimize", "user-desktop", "window-uuid", False),
+        ("fullscreen", "user-desktop", "window-uuid", True),
+        ("maximized", "user-desktop", "window-uuid", False),
         ("geometry", "user-desktop", "window-uuid", 10, 20, 640, 480),
         ("pointer-position", "agent-123456789abc"),
         ("observe", "agent-123456789abc", None, False),

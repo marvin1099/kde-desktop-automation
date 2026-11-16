@@ -33,6 +33,12 @@ from kde_desktop_automation.backends.kwin_input import (
     validate_drag_steps,
     validate_drag_timing,
 )
+from kde_desktop_automation.backends.kwin_window_management import (
+    set_window_state as set_kwin_window_state,
+)
+from kde_desktop_automation.backends.kwin_window_management import (
+    window_management_version,
+)
 from kde_desktop_automation.backends.screenshot_helper import screenshot_helper_ready
 from kde_desktop_automation.backends.screenshots import (
     capture_fullscreen,
@@ -464,6 +470,62 @@ class UserDesktopBackend:
             "note": "Changing minimized state may change live user focus.",
         }
 
+    def set_window_fullscreen(self, window_id: str, fullscreen: bool) -> dict[str, Any]:
+        result = set_kwin_window_state(
+            self.socket_path,
+            window_id,
+            state="fullscreen",
+            enabled=fullscreen,
+        )
+        if result["verified"] is not True:
+            raise InteractionError(
+                "window_state_unverified",
+                "KWin did not report the requested fullscreen state.",
+                details={
+                    "window_id": window_id,
+                    "fullscreen": fullscreen,
+                    "readback": result,
+                },
+            )
+        return {
+            "target": {"kind": "user-desktop", "window_id": window_id},
+            "action": "set-fullscreen",
+            "fullscreen": fullscreen,
+            "changed": result["changed"],
+            "verified": True,
+            "focus_changed": result["focus_changed"],
+            "window": result["window"],
+            "note": "Fullscreen state changes affect the live workspace and may change focus.",
+        }
+
+    def set_window_maximized(self, window_id: str, maximized: bool) -> dict[str, Any]:
+        result = set_kwin_window_state(
+            self.socket_path,
+            window_id,
+            state="maximized",
+            enabled=maximized,
+        )
+        if result["verified"] is not True:
+            raise InteractionError(
+                "window_state_unverified",
+                "KWin did not report the requested maximized state.",
+                details={
+                    "window_id": window_id,
+                    "maximized": maximized,
+                    "readback": result,
+                },
+            )
+        return {
+            "target": {"kind": "user-desktop", "window_id": window_id},
+            "action": "set-maximized",
+            "maximized": maximized,
+            "changed": result["changed"],
+            "verified": True,
+            "focus_changed": result["focus_changed"],
+            "window": result["window"],
+            "note": "Maximized state changes affect the live workspace and may change focus.",
+        }
+
     def set_window_geometry(
         self,
         window_id: str,
@@ -541,6 +603,7 @@ class UserDesktopBackend:
 
     def capabilities(self) -> dict[str, Any]:
         version: int | None
+        window_protocol_version: int | None
         input_reason: str | None = None
         window_reason: str | None = None
         try:
@@ -556,6 +619,15 @@ class UserDesktopBackend:
         except InteractionError as exc:
             version = None
             input_reason = exc.message
+        try:
+            window_protocol_version = window_management_version(self.socket_path)
+        except InteractionError:
+            window_protocol_version = None
+        window_state_available = (
+            window_available
+            and window_protocol_version is not None
+            and window_protocol_version >= 13
+        )
         key_available = window_available and version is not None and version >= 6
         click_available = window_available and version is not None and version >= 3
         global_pointer_available = version is not None and version >= 3
@@ -568,6 +640,8 @@ class UserDesktopBackend:
                 "window.inspect": window_available,
                 "window.activate": window_available,
                 "window.set_minimized": window_available,
+                "window.set_fullscreen": window_state_available,
+                "window.set_maximized": window_state_available,
                 "window.set_geometry": window_available and shutil.which("kdotool") is not None,
                 "desktop.observe": window_available and shutil.which("wlpdisplays") is not None,
                 "input.pointer_position": shutil.which("kdotool") is not None,
@@ -603,6 +677,7 @@ class UserDesktopBackend:
                 and shutil.which("pactl") is not None,
             },
             "input_protocol_version": version,
+            "window_management_protocol_version": window_protocol_version,
             "input_semantics": {
                 "routing": "KWin fake input through the live compositor's active focus",
                 "window_targeting": "active-window-guard; focus can still change during submission",
@@ -614,7 +689,9 @@ class UserDesktopBackend:
                 "delivery_acknowledged": False,
             },
             "capability_probe": {
-                "window_management": "read-only window listing and KWin D-Bus metadata query",
+                "window_management": (
+                    "KWin window protocol version probed; window state requests are read back"
+                ),
                 "display": "wlpdisplays executable presence only",
                 "screenshot": (
                     "KWin Screenshot2 executable and matching restricted-interface desktop entry "

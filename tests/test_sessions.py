@@ -27,6 +27,8 @@ class FakeBackend:
         self.launch_delay = 0.0
         self.drag_calls: list[tuple[int, int, int, int, str, int, int, int, int]] = []
         self.minimized_calls: list[tuple[str, bool]] = []
+        self.window_state_calls: list[tuple[str, str, bool]] = []
+        self.window_state_verified = True
         self.geometry_calls: list[tuple[str, int, int, int, int]] = []
 
     def start(self, session_id: str, name: str, width: int, height: int) -> SessionRecord:
@@ -147,6 +149,34 @@ class FakeBackend:
         self.minimized_calls.append((window_id, minimized))
         return {"window_id": window_id, "minimized": minimized, "active": False}
 
+    def set_window_fullscreen(
+        self,
+        _session: SessionRecord,
+        window_id: str,
+        fullscreen: bool,
+    ) -> dict[str, object]:
+        self.window_state_calls.append(("fullscreen", window_id, fullscreen))
+        return {
+            "window": {"window_id": window_id, "fullscreen": fullscreen},
+            "verified": self.window_state_verified,
+            "changed": True,
+            "focus_changed": False,
+        }
+
+    def set_window_maximized(
+        self,
+        _session: SessionRecord,
+        window_id: str,
+        maximized: bool,
+    ) -> dict[str, object]:
+        self.window_state_calls.append(("maximized", window_id, maximized))
+        return {
+            "window": {"window_id": window_id, "maximized": maximized},
+            "verified": self.window_state_verified,
+            "changed": True,
+            "focus_changed": False,
+        }
+
     def set_window_geometry(
         self,
         _session: SessionRecord,
@@ -215,6 +245,8 @@ def test_private_capabilities_report_screenshot_executable_availability(
 
     session = replace(session, window_management_version=13)
     manager.store.save(session)
+    assert manager.get_session(session.session_id)["capabilities"]["window.set_fullscreen"] is True
+    assert manager.get_session(session.session_id)["capabilities"]["window.set_maximized"] is True
     assert (
         manager.get_session(session.session_id)["capabilities"]["screenshot.window.capture"] is True
     )
@@ -399,6 +431,38 @@ def test_private_window_minimized_state_is_explicit_and_verified(manager: Sessio
     assert result["minimized"] is True
     assert result["verified"] is True
     assert manager.backend.minimized_calls == [("window-uuid", True)]
+
+
+def test_private_window_fullscreen_and_maximize_states_are_explicit_and_verified(
+    manager: SessionManager,
+) -> None:
+    session = manager.create_agent_session("window-state", 640, 480)
+    manager.store.save(replace(session, window_management_version=13))
+
+    fullscreen = manager.set_window_fullscreen(session.session_id, "window-uuid", True)
+    restore_maximize = manager.set_window_maximized(session.session_id, "window-uuid", False)
+
+    assert fullscreen["action"] == "set-fullscreen"
+    assert fullscreen["fullscreen"] is True
+    assert fullscreen["verified"] is True
+    assert restore_maximize["action"] == "set-maximized"
+    assert restore_maximize["maximized"] is False
+    assert restore_maximize["verified"] is True
+    assert manager.backend.window_state_calls == [
+        ("fullscreen", "window-uuid", True),
+        ("maximized", "window-uuid", False),
+    ]
+
+
+def test_private_window_state_requires_backend_readback_to_match(manager: SessionManager) -> None:
+    session = manager.create_agent_session("unverified-window-state", 640, 480)
+    manager.store.save(replace(session, window_management_version=13))
+    manager.backend.window_state_verified = False
+
+    with pytest.raises(InteractionError) as error:
+        manager.set_window_fullscreen(session.session_id, "window-uuid", True)
+
+    assert error.value.code == "window_state_unverified"
 
 
 def test_private_window_geometry_and_pointer_position_are_target_scoped(

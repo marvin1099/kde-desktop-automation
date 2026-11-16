@@ -99,6 +99,8 @@ app.add_typer(audio_app, name="audio")
 console = Console()
 MediaControlAction = Literal["play", "pause", "play-pause", "stop", "next", "previous", "seek"]
 WindowMinimizedState = Literal["minimized", "restored"]
+WindowFullscreenState = Literal["fullscreen", "restored"]
+WindowMaximizedState = Literal["maximized", "restored"]
 MouseButton = Literal["left", "middle", "right"]
 
 
@@ -375,6 +377,46 @@ def set_window_minimized(
     """Set and verify a window's minimized state; restoring reverses minimization."""
     _run(
         lambda: (_operations(ctx).window_set_minimized(window_id, state == "minimized"), []),
+        json_output=json_output,
+    )
+
+
+@window_app.command("set-fullscreen")
+def set_window_fullscreen(
+    ctx: Context,
+    window_id: str = typer.Argument(
+        ..., help="UUID from window list/find for the selected session."
+    ),
+    state: WindowFullscreenState = typer.Argument(
+        ..., help="Desired state: fullscreen or restored."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Set or restore a window's fullscreen state and verify KWin's readback."""
+    _run(
+        lambda: (
+            _operations(ctx).window_set_fullscreen(window_id, state == "fullscreen"),
+            [],
+        ),
+        json_output=json_output,
+    )
+
+
+@window_app.command("set-maximized")
+def set_window_maximized(
+    ctx: Context,
+    window_id: str = typer.Argument(
+        ..., help="UUID from window list/find for the selected session."
+    ),
+    state: WindowMaximizedState = typer.Argument(..., help="Desired state: maximized or restored."),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Set or restore a window's maximized state and verify KWin's readback."""
+    _run(
+        lambda: (
+            _operations(ctx).window_set_maximized(window_id, state == "maximized"),
+            [],
+        ),
         json_output=json_output,
     )
 
@@ -827,6 +869,40 @@ def set_user_window_minimized(
     _run(
         lambda: (
             _user_desktop_operations().window_set_minimized(window_id, state == "minimized"),
+            [],
+        ),
+        json_output=json_output,
+    )
+
+
+@user_window_app.command("set-fullscreen")
+def set_user_window_fullscreen(
+    window_id: str = typer.Argument(..., help="UUID from user-desktop window list/find."),
+    state: WindowFullscreenState = typer.Argument(
+        ..., help="Desired state: fullscreen or restored."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Set or restore fullscreen on a live window; this affects the real workspace."""
+    _run(
+        lambda: (
+            _user_desktop_operations().window_set_fullscreen(window_id, state == "fullscreen"),
+            [],
+        ),
+        json_output=json_output,
+    )
+
+
+@user_window_app.command("set-maximized")
+def set_user_window_maximized(
+    window_id: str = typer.Argument(..., help="UUID from user-desktop window list/find."),
+    state: WindowMaximizedState = typer.Argument(..., help="Desired state: maximized or restored."),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Set or restore maximization on a live window; this affects the real workspace."""
+    _run(
+        lambda: (
+            _user_desktop_operations().window_set_maximized(window_id, state == "maximized"),
             [],
         ),
         json_output=json_output,

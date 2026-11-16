@@ -236,6 +236,76 @@ def test_private_kwin_captures_inactive_window_without_changing_focus(
 
 
 @pytest.mark.skipif(
+    os.environ.get("KDE_DESKTOP_RUN_KWIN_WINDOW_STATE_INTEGRATION") != "1",
+    reason="set KDE_DESKTOP_RUN_KWIN_WINDOW_STATE_INTEGRATION=1 to test private KWin state control",
+)
+def test_private_kwin_fullscreen_maximize_and_restore_are_verified(tmp_path) -> None:
+    test_window = os.environ.get("KDE_DESKTOP_WINDOW_TEST_APP")
+    if test_window is None:
+        test_window = str(
+            Path(__file__).parents[1]
+            / "build"
+            / "screenshot-helper"
+            / "kde-desktop-screenshot-test-window"
+        )
+    if not Path(test_window).is_file() or not os.access(test_window, os.X_OK):
+        pytest.skip("build kde-desktop-screenshot-test-window or set KDE_DESKTOP_WINDOW_TEST_APP")
+    host_runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not host_runtime:
+        pytest.skip("an XDG_RUNTIME_DIR is required")
+
+    paths = RuntimePaths.from_environment(
+        {
+            "XDG_RUNTIME_DIR": host_runtime,
+            "XDG_STATE_HOME": str(tmp_path / "state"),
+        }
+    )
+    manager = SessionManager(paths, KWinVirtualBackend(paths))
+    session = manager.create_agent_session("private-window-state", 1024, 768)
+    operations = DesktopOperations(session.session_id, manager=manager)
+    title = "Private window state integration"
+    try:
+        manager.launch_application(session.session_id, (test_window, title))
+        deadline = time.monotonic() + 15.0
+        window: dict[str, object] | None = None
+        while time.monotonic() < deadline:
+            windows = operations.window_list()["windows"]
+            window = next((item for item in windows if item["title"] == title), None)
+            if window is not None:
+                break
+            time.sleep(0.1)
+        if window is None:
+            raise AssertionError(f"Timed out waiting for window {title!r}")
+        window_id = str(window["window_id"])
+        assert window["maximizable"] is True, window
+        assert window["fullscreenable"] is True, window
+
+        minimized = operations.window_set_minimized(window_id, True)
+        assert minimized["verified"] is True
+        assert operations.window_inspect(window_id)["window"]["minimized"] is True
+        restored = operations.window_set_minimized(window_id, False)
+        assert restored["verified"] is True
+        assert operations.window_inspect(window_id)["window"]["minimized"] is False
+        operations.window_activate(window_id)
+
+        fullscreen = operations.window_set_fullscreen(window_id, True)
+        assert fullscreen["verified"] is True
+        assert operations.window_inspect(window_id)["window"]["fullscreen"] is True
+        restored = operations.window_set_fullscreen(window_id, False)
+        assert restored["verified"] is True
+        assert operations.window_inspect(window_id)["window"]["fullscreen"] is False
+
+        maximized = operations.window_set_maximized(window_id, True)
+        assert maximized["verified"] is True
+        assert operations.window_inspect(window_id)["window"]["maximized"] is True
+        restored = operations.window_set_maximized(window_id, False)
+        assert restored["verified"] is True
+        assert operations.window_inspect(window_id)["window"]["maximized"] is False
+    finally:
+        manager.stop(session.session_id)
+
+
+@pytest.mark.skipif(
     os.environ.get("KDE_DESKTOP_RUN_KWIN_DND_INTEGRATION") != "1",
     reason=(
         "set KDE_DESKTOP_RUN_KWIN_DND_INTEGRATION=1 to test private Dolphin-to-Kate drag-and-drop"

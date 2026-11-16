@@ -38,6 +38,18 @@ class FakeOperations:
             "minimized": minimized,
         }
 
+    def window_set_fullscreen(self, window_id: str, fullscreen: bool) -> dict[str, Any]:
+        return {
+            "target": {"kind": self.session, "window_id": window_id},
+            "fullscreen": fullscreen,
+        }
+
+    def window_set_maximized(self, window_id: str, maximized: bool) -> dict[str, Any]:
+        return {
+            "target": {"kind": self.session, "window_id": window_id},
+            "maximized": maximized,
+        }
+
     def window_set_geometry(
         self,
         window_id: str,
@@ -215,6 +227,8 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         "kde_window_wait",
         "kde_window_activate",
         "kde_window_set_minimized",
+        "kde_window_set_fullscreen",
+        "kde_window_set_maximized",
         "kde_window_set_geometry",
         "kde_input_key",
         "kde_input_type",
@@ -255,6 +269,8 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         "kde_window_inspect",
         "kde_window_activate",
         "kde_window_set_minimized",
+        "kde_window_set_fullscreen",
+        "kde_window_set_maximized",
         "kde_window_set_geometry",
         "kde_input_key",
         "kde_input_type",
@@ -321,6 +337,10 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
     assert drag_tool.inputSchema["properties"]["button"]["enum"] == ["left", "middle", "right"]
     minimized_tool = next(tool for tool in tools if tool.name == "kde_window_set_minimized")
     assert minimized_tool.inputSchema["properties"]["minimized"]["type"] == "boolean"
+    fullscreen_tool = next(tool for tool in tools if tool.name == "kde_window_set_fullscreen")
+    assert fullscreen_tool.inputSchema["properties"]["fullscreen"]["type"] == "boolean"
+    maximized_tool = next(tool for tool in tools if tool.name == "kde_window_set_maximized")
+    assert maximized_tool.inputSchema["properties"]["maximized"]["type"] == "boolean"
     geometry_tool = next(tool for tool in tools if tool.name == "kde_window_set_geometry")
     assert geometry_tool.inputSchema["properties"]["width"]["minimum"] == 1
     assert geometry_tool.inputSchema["properties"]["width"]["maximum"] == 32_768
@@ -431,6 +451,32 @@ def test_mcp_global_pointer_and_minimized_tools_use_explicit_target() -> None:
     assert drag.structuredContent["data"]["steps"] == 4
     assert minimized.structuredContent["data"]["minimized"] is False
     assert FakeOperations.selected_sessions == [session_id, session_id, session_id]
+
+
+def test_mcp_fullscreen_and_maximize_tools_use_explicit_target_and_state() -> None:
+    server = _server()
+    session_id = "user-desktop"
+
+    async def invoke_all() -> list[CallToolResult]:
+        results = await asyncio.gather(
+            server.call_tool(
+                "kde_window_set_fullscreen",
+                {"session": session_id, "window_id": "window-uuid", "fullscreen": True},
+            ),
+            server.call_tool(
+                "kde_window_set_maximized",
+                {"session": session_id, "window_id": "window-uuid", "maximized": False},
+            ),
+        )
+        return [cast(CallToolResult, result) for result in results]
+
+    fullscreen, maximized = asyncio.run(invoke_all())
+
+    assert fullscreen.isError is False
+    assert fullscreen.structuredContent["data"]["fullscreen"] is True
+    assert maximized.isError is False
+    assert maximized.structuredContent["data"]["maximized"] is False
+    assert FakeOperations.selected_sessions == [session_id, session_id]
 
 
 def test_mcp_geometry_and_pointer_position_are_generic_explicit_tools() -> None:

@@ -350,6 +350,54 @@ def create_mcp_server(
         )
 
     @server.tool(
+        name="kde_window_set_fullscreen",
+        description=(
+            "Set a window's fullscreen state explicitly and verify it. Setting false restores "
+            "the window; enabling fullscreen requires it not be minimized or maximized. "
+            "Live changes affect the real workspace and may change focus."
+        ),
+        annotations=ToolAnnotations(
+            destructiveHint=True,
+            idempotentHint=True,
+            openWorldHint=True,
+        ),
+        structured_output=False,
+    )
+    def window_set_fullscreen(
+        session: TargetSession,
+        window_id: WindowId,
+        fullscreen: bool,
+    ) -> CallToolResult:
+        """Set an explicit fullscreen boolean for one window in the selected session."""
+        return _invoke(
+            lambda: desktop_operations(session).window_set_fullscreen(window_id, fullscreen)
+        )
+
+    @server.tool(
+        name="kde_window_set_maximized",
+        description=(
+            "Set a window's maximized state explicitly and verify it. Setting false restores "
+            "the window; enabling maximization requires it not be minimized or fullscreen. "
+            "Live changes affect the real workspace and may change focus."
+        ),
+        annotations=ToolAnnotations(
+            destructiveHint=True,
+            idempotentHint=True,
+            openWorldHint=True,
+        ),
+        structured_output=False,
+    )
+    def window_set_maximized(
+        session: TargetSession,
+        window_id: WindowId,
+        maximized: bool,
+    ) -> CallToolResult:
+        """Set an explicit maximized boolean for one window in the selected session."""
+        return _invoke(
+            lambda: desktop_operations(session).window_set_maximized(window_id, maximized)
+        )
+
+    @server.tool(
         name="kde_window_set_geometry",
         description=(
             "Set an explicit KWin frame rectangle in logical desktop pixels and verify its "

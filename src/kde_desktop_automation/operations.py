@@ -115,6 +115,20 @@ class DesktopOperations:
             self._private_session_id(), window_id, minimized
         )
 
+    def window_set_fullscreen(self, window_id: str, fullscreen: bool) -> dict[str, Any]:
+        if self._user_desktop is not None:
+            return self._user_desktop.set_window_fullscreen(window_id, fullscreen)
+        return self._private_manager().set_window_fullscreen(
+            self._private_session_id(), window_id, fullscreen
+        )
+
+    def window_set_maximized(self, window_id: str, maximized: bool) -> dict[str, Any]:
+        if self._user_desktop is not None:
+            return self._user_desktop.set_window_maximized(window_id, maximized)
+        return self._private_manager().set_window_maximized(
+            self._private_session_id(), window_id, maximized
+        )
+
     def window_set_geometry(
         self,
         window_id: str,
