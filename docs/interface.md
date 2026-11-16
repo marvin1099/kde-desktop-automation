@@ -552,8 +552,12 @@ AI.
 ## Capabilities and future accessibility
 
 The current milestone uses window metadata, pointer readback, screenshots, and
-coordinates. Capability reports expose the current boundary. An accessibility
-provider remains a separate optional adapter:
+coordinates. Capability reports expose the current boundary. AT-SPI2 is
+installed and its registry is running on the probed user session, but that
+probe found no AT-SPI application root that could be matched to a current KWin
+window. A live registry alone is not evidence of usable controls, so semantic
+tools remain unavailable. Any eventual accessibility provider must be a
+separate optional, target-scoped adapter:
 
 ```json
 {
@@ -566,17 +570,21 @@ provider remains a separate optional adapter:
 
 Coordinate automation alone is brittle. A later optional control-discovery
 adapter could expose an accessibility tree (role, accessible name, bounds,
-supported actions, and parent/child relationships) and permit targets such as a
-button by accessible name. OCR could add visible text and locations where
-accessibility metadata is missing; visual/icon detection could cover some
-unlabeled controls. Combining these sources may improve coverage, but adds
-runtime and dependency overhead and can create false positives or incorrect
-matches. Evaluate each source and any combined pipeline carefully before
-implementation, and preserve source/confidence information so ambiguity can be
-handled conservatively. Keep discovery additive: tools without support must
-still offer window-level inspection, screenshots, and coordinate input. A
-detection is a candidate, not proof that an element is actionable or that an
-input had the intended effect.
+supported actions, and parent/child relationships). It must reliably map a
+top-level accessible window to the selected KWin window and process identity; a
+PID alone is insufficient for multi-window processes. Bind opaque element refs
+to a fresh session/window observation and reject stale or ambiguous targets.
+Only actions explicitly advertised by a currently actionable element should be
+eligible; submissions must be distinguished from verified effects. OCR could
+add visible text and locations where accessibility metadata is missing;
+visual/icon detection could cover some unlabeled controls. Neither should be
+promoted to actionable controls without independent evidence. Combining these
+sources may improve coverage, but adds runtime and dependency overhead and can
+create false positives or incorrect matches. Evaluate each source and any
+combined pipeline carefully before implementation, preserving source evidence
+and handling ambiguity conservatively. Tools without support must continue to
+offer window-level inspection, screenshots, and explicit coordinate input. See
+the [accessibility probe and design notes](automation-roadmap.md#accessibility-provider-probe-and-future-ui-control-discovery).
 
 ## MCP mapping
 

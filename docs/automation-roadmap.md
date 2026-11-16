@@ -79,7 +79,25 @@ metadata and unchanged focus while capturing an inactive window. Minimized and
 occluded-window behavior and richer pixel/logical-coordinate scale mapping are
 not yet guaranteed.
 
-## Future candidate: UI control discovery
+## Accessibility-provider probe and future UI control discovery
+
+### Availability probe (2026-11-16)
+
+The current user session has AT-SPI2 infrastructure installed and running:
+`at-spi2-core` 2.62.1-1, the `org.a11y.Bus` session service, and
+`at-spi2-registryd` were present. The `Atspi-2.0` GObject Introspection binding
+was importable, `Atspi.get_desktop(0)` returned a desktop object, and KWin
+registered `org.freedesktop.a11y.Manager`.
+
+That confirms provider infrastructure, not usable control coverage. In a
+read-only sample, KWin reported 7 windows while the AT-SPI desktop exposed 7
+application roots; none had top-level accessible children, and none matched a
+KWin window by PID. Thus no current window could be mapped to an accessible
+control tree. This result is session- and application-dependent; it does not
+prove AT-SPI is unavailable on other targets or that a future app cannot expose
+a tree. No software was installed, no accessibility setting was changed, and
+no semantic action was attempted. Do not advertise an accessibility capability
+or expose semantic controls on the strength of a running bus alone.
 
 Control discovery is a possible future feature, not a committed implementation
 plan. The current interface exposes windows, screenshots, and coordinate input,
@@ -108,6 +126,24 @@ applications and layouts for coverage, false-positive rate, and runtime cost;
 it should retain source evidence, handle ambiguity conservatively, and never
 assume a detected candidate is actionable without verification. This remains an
 exploration item rather than a near-term commitment.
+
+Any future accessibility adapter should be optional and target-scoped. It must
+reliably map a fresh AT-SPI top-level window to the selected KWin window and
+process identity before returning that window's tree; a PID alone is
+insufficient when one process owns multiple windows, and a desktop-wide tree or
+title-based guess is not an acceptable substitute. If exact mapping cannot be
+proven, report the provider as unavailable for that window.
+Element references should be opaque and short-lived, bound to the selected
+session, window identity, and observation. Inspection should identify the source
+and expose only bounded metadata needed to disambiguate elements. An action
+should require one exact fresh reference, an action advertised by that element,
+and a currently actionable state; stale, unsupported, or ambiguous targets must
+fail closed. Read back the tree or independent application state afterward and
+report request submission separately from verified effect. Keep coordinate
+input available as an explicit fallback, but never silently convert OCR text or
+visual detections into actionable controls. Semantic inspection and action
+tools remain unimplemented until real per-application coverage and those safety
+properties can be tested.
 
 ## AI and scripting usability
 
