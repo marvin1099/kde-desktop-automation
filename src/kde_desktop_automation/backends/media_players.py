@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from math import isfinite
@@ -15,6 +16,11 @@ from kde_desktop_automation.process import (
 
 _TRANSPORT_ACTIONS = frozenset({"play", "pause", "play-pause", "stop", "next", "previous"})
 _MAX_SEEK_SECONDS = 24 * 60 * 60
+_PLAYBACK_STATUSES = frozenset({"Playing", "Paused", "Stopped"})
+_MIN_MEDIA_WAIT_SECONDS = 0.1
+_MAX_MEDIA_WAIT_SECONDS = 60.0
+_MEDIA_POLL_INTERVAL_SECONDS = 0.2
+_PLAYER_COMMAND_TIMEOUT_SECONDS = 3.0
 
 
 class MprisBackend:
@@ -78,27 +84,7 @@ class MprisBackend:
                 )
             argv = [action]
         elif action == "seek":
-            if (
-                seconds is None
-                or isinstance(seconds, bool)
-                or not isinstance(seconds, (int, float))
-                or not isfinite(seconds)
-                or seconds == 0
-            ):
-                raise InteractionError(
-                    "invalid_seek",
-                    "Seek requires a finite, non-zero relative offset in seconds.",
-                    details={"seconds": seconds},
-                )
-            if abs(seconds) > _MAX_SEEK_SECONDS:
-                raise InteractionError(
-                    "invalid_seek",
-                    "A relative seek cannot exceed 24 hours in either direction.",
-                    details={"seconds": seconds, "maximum_absolute_seconds": _MAX_SEEK_SECONDS},
-                )
-            magnitude = f"{abs(seconds):.6f}".rstrip("0").rstrip(".")
-            offset = f"{magnitude}{'+' if seconds > 0 else '-'}"
-            argv = ["position", offset]
+            argv = ["position", _relative_seek_offset(seconds)]
         else:
             raise InteractionError(
                 "invalid_media_command",
@@ -119,6 +105,150 @@ class MprisBackend:
                 "to verify effect."
             ),
         }
+
+    def seek_by_player(
+        self,
+        player: str,
+        seconds: float,
+        *,
+        target: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Submit one non-zero relative seek to one exact MPRIS player."""
+        offset = _relative_seek_offset(seconds)
+        selected = self._resolve_player(player)
+        require_success(self._run_player(selected, "position", offset))
+        return {
+            "target": target,
+            "player": selected,
+            "action": "seek-by",
+            "seconds": seconds,
+            "command_submitted": True,
+            "effect_verified": False,
+            "note": (
+                "The player accepted the relative MPRIS position request; inspect position "
+                "to verify effect."
+            ),
+        }
+
+    def wait_for_status(
+        self,
+        player: str,
+        expected_status: str,
+        *,
+        timeout: float,
+        target: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Wait a bounded time for one exact MPRIS player's playback status."""
+        if not isinstance(expected_status, str) or expected_status not in _PLAYBACK_STATUSES:
+            raise InteractionError(
+                "invalid_playback_status",
+                "Playback status must be Playing, Paused, or Stopped.",
+                details={"expected_playback_status": expected_status},
+            )
+        try:
+            timeout_seconds = (
+                float(timeout)
+                if not isinstance(timeout, bool) and isinstance(timeout, (int, float))
+                else None
+            )
+        except OverflowError:
+            timeout_seconds = None
+        if (
+            timeout_seconds is None
+            or not isfinite(timeout_seconds)
+            or timeout_seconds < _MIN_MEDIA_WAIT_SECONDS
+            or timeout_seconds > _MAX_MEDIA_WAIT_SECONDS
+        ):
+            raise InteractionError(
+                "invalid_timeout",
+                "Media wait timeout must be between 0.1 and 60 seconds.",
+                details={
+                    "timeout_seconds": timeout,
+                    "minimum_seconds": _MIN_MEDIA_WAIT_SECONDS,
+                    "maximum_seconds": _MAX_MEDIA_WAIT_SECONDS,
+                },
+            )
+
+        started = time.monotonic()
+        deadline = started + timeout_seconds
+        try:
+            selected = self._resolve_player(
+                player,
+                timeout=min(_PLAYER_COMMAND_TIMEOUT_SECONDS, timeout_seconds),
+            )
+        except InteractionError as exc:
+            if exc.code != "backend_timeout":
+                raise
+            raise InteractionError(
+                "media_wait_timeout",
+                "The selected MPRIS player could not be resolved before the timeout.",
+                details={
+                    "player": player,
+                    "expected_playback_status": expected_status,
+                    "timeout_seconds": timeout_seconds,
+                    "last_observation": None,
+                    "selector_resolution_error": exc.as_dict(),
+                },
+            ) from exc
+
+        last_observation: dict[str, Any] | None = None
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            query_error: dict[str, Any] | None = None
+            try:
+                result = self._run_player(
+                    selected,
+                    "status",
+                    timeout=min(_PLAYER_COMMAND_TIMEOUT_SECONDS, remaining),
+                )
+            except InteractionError as exc:
+                if exc.code != "backend_timeout":
+                    raise
+                playback_status = None
+                query_error = exc.as_dict()
+            else:
+                if result.returncode == 0:
+                    playback_status = result.stdout.strip() or None
+                else:
+                    playback_status = None
+                    query_error = {
+                        "returncode": result.returncode,
+                        "stderr": result.stderr.strip()[:512],
+                    }
+            last_observation = {
+                "player": selected,
+                "playback_status": playback_status,
+                "query_error": query_error,
+            }
+            if playback_status == expected_status:
+                return {
+                    "target": target,
+                    "player": selected,
+                    "playback_status": playback_status,
+                    "expected_playback_status": expected_status,
+                    "waited_seconds": round(time.monotonic() - started, 3),
+                    "last_observation": last_observation,
+                    "verified": True,
+                }
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(_MEDIA_POLL_INTERVAL_SECONDS, remaining))
+
+        raise InteractionError(
+            "media_wait_timeout",
+            "The requested MPRIS playback status was not observed before the timeout.",
+            details={
+                "target": target,
+                "player": selected,
+                "expected_playback_status": expected_status,
+                "timeout_seconds": timeout_seconds,
+                "waited_seconds": round(time.monotonic() - started, 3),
+                "last_observation": last_observation,
+            },
+        )
 
     def seek_to_player(
         self,
@@ -161,8 +291,8 @@ class MprisBackend:
             ),
         }
 
-    def _available_players(self) -> list[str]:
-        result = run_command([self.playerctl, "--list-all"], env=self.environ, timeout=3.0)
+    def _available_players(self, *, timeout: float = _PLAYER_COMMAND_TIMEOUT_SECONDS) -> list[str]:
+        result = run_command([self.playerctl, "--list-all"], env=self.environ, timeout=timeout)
         require_success(result)
         names = list(
             dict.fromkeys(line.strip() for line in result.stdout.splitlines() if line.strip())
@@ -174,14 +304,19 @@ class MprisBackend:
             )
         return names
 
-    def _resolve_player(self, player: str) -> str:
+    def _resolve_player(
+        self,
+        player: str,
+        *,
+        timeout: float = _PLAYER_COMMAND_TIMEOUT_SECONDS,
+    ) -> str:
         if not player or player != player.strip() or "," in player or "\0" in player:
             raise InteractionError(
                 "invalid_player_selector",
                 "Pass one exact player name returned by media list.",
                 details={"player": player},
             )
-        players = self._available_players()
+        players = self._available_players(timeout=timeout)
         if player not in players:
             raise InteractionError(
                 "player_not_found",
@@ -197,11 +332,16 @@ class MprisBackend:
             )
         return player
 
-    def _run_player(self, player: str, *args: str) -> CommandResult:
+    def _run_player(
+        self,
+        player: str,
+        *args: str,
+        timeout: float = _PLAYER_COMMAND_TIMEOUT_SECONDS,
+    ) -> CommandResult:
         return run_command(
             [self.playerctl, f"--player={player}", *args],
             env=self.environ,
-            timeout=3.0,
+            timeout=timeout,
         )
 
     def _optional_metadata(self, player: str, key: str) -> str | None:
@@ -233,6 +373,31 @@ def _parse_optional_float(value: str | None, field: str) -> float | None:
             details={"field": field, "value": value},
         )
     return result
+
+
+def _relative_seek_offset(seconds: float | None) -> str:
+    try:
+        numeric = (
+            float(seconds)
+            if not isinstance(seconds, bool) and isinstance(seconds, (int, float))
+            else None
+        )
+    except OverflowError:
+        numeric = None
+    if numeric is None or not isfinite(numeric) or numeric == 0:
+        raise InteractionError(
+            "invalid_seek",
+            "Relative seek requires a finite, non-zero offset in seconds.",
+            details={"seconds": seconds},
+        )
+    if abs(numeric) > _MAX_SEEK_SECONDS:
+        raise InteractionError(
+            "invalid_seek",
+            "A relative seek cannot exceed 24 hours in either direction.",
+            details={"seconds": seconds, "maximum_absolute_seconds": _MAX_SEEK_SECONDS},
+        )
+    magnitude = f"{abs(numeric):.6f}".rstrip("0").rstrip(".")
+    return f"{magnitude}{'+' if numeric > 0 else '-'}"
 
 
 def _parse_duration(value: str | None) -> float | None:

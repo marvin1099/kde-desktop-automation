@@ -4,6 +4,7 @@ from collections.abc import Mapping, Sequence
 
 import pytest
 
+from kde_desktop_automation.backends import media_players
 from kde_desktop_automation.backends.media_players import MprisBackend
 from kde_desktop_automation.errors import InteractionError
 from kde_desktop_automation.process import CommandResult
@@ -17,8 +18,10 @@ def _fake_backend(
     metadata: Mapping[str, str] | None = None,
     *,
     position: str = "12.5",
+    statuses: Sequence[str] | None = None,
 ) -> tuple[MprisBackend, list[tuple[str, ...]]]:
     calls: list[tuple[str, ...]] = []
+    status_values = list(statuses or ["Playing"])
     monkeypatch.setattr(
         "kde_desktop_automation.backends.media_players.require_executable",
         lambda _name: "/usr/bin/playerctl",
@@ -31,7 +34,7 @@ def _fake_backend(
         timeout: float,
     ) -> CommandResult:
         assert env == {"DBUS_SESSION_BUS_ADDRESS": "unix:path=/test/bus"}
-        assert timeout == 3.0
+        assert 0 < timeout <= 3.0
         command = tuple(argv[1:])
         calls.append(command)
         if command == ("--list-all",):
@@ -39,7 +42,8 @@ def _fake_backend(
         player = command[0].removeprefix("--player=")
         operation = command[1:]
         if operation == ("status",):
-            return CommandResult(tuple(argv), 0, "Playing\n", "")
+            status = status_values.pop(0) if len(status_values) > 1 else status_values[0]
+            return CommandResult(tuple(argv), 0, f"{status}\n", "")
         if operation == ("position",):
             return CommandResult(tuple(argv), 0, position + "\n", "")
         if operation[:1] == ("metadata",):
@@ -125,6 +129,92 @@ def test_mpris_control_targets_one_player_and_seeks_by_relative_seconds(
     assert result["seconds"] == 12.5
     assert result["command_submitted"] is True
     assert result["effect_verified"] is False
+
+
+def test_mpris_seek_by_has_a_dedicated_exact_player_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, calls = _fake_backend(monkeypatch, ["vlc"])
+
+    result = backend.seek_by_player("vlc", -12.25, target=TARGET)
+
+    assert calls[-1] == ("--player=vlc", "position", "12.25-")
+    assert result["target"] == TARGET
+    assert result["player"] == "vlc"
+    assert result["action"] == "seek-by"
+    assert result["seconds"] == -12.25
+    assert result["command_submitted"] is True
+    assert result["effect_verified"] is False
+
+
+@pytest.mark.parametrize("seconds", [0, float("inf"), float("nan"), 86_401, True, 10**1000])
+def test_mpris_seek_by_rejects_invalid_offsets_before_player_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+    seconds: float,
+) -> None:
+    backend, calls = _fake_backend(monkeypatch, ["vlc"])
+
+    with pytest.raises(InteractionError) as error:
+        backend.seek_by_player("vlc", seconds, target=TARGET)  # type: ignore[arg-type]
+
+    assert error.value.code == "invalid_seek"
+    assert calls == []
+
+
+def test_mpris_wait_for_status_polls_one_exact_player_until_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, calls = _fake_backend(monkeypatch, ["vlc"], statuses=["Paused", "Playing"])
+    monkeypatch.setattr(media_players.time, "sleep", lambda _seconds: None)
+
+    result = backend.wait_for_status("vlc", "Playing", timeout=1.0, target=TARGET)
+
+    assert calls.count(("--player=vlc", "status")) == 2
+    assert result["target"] == TARGET
+    assert result["player"] == "vlc"
+    assert result["playback_status"] == "Playing"
+    assert result["expected_playback_status"] == "Playing"
+    assert result["waited_seconds"] >= 0
+    assert result["last_observation"]["playback_status"] == "Playing"
+
+
+def test_mpris_wait_timeout_includes_last_observed_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, _calls = _fake_backend(monkeypatch, ["vlc"], statuses=["Paused"])
+
+    with pytest.raises(InteractionError) as error:
+        backend.wait_for_status("vlc", "Playing", timeout=0.1, target=TARGET)
+
+    assert error.value.code == "media_wait_timeout"
+    assert error.value.details["expected_playback_status"] == "Playing"
+    assert error.value.details["last_observation"]["playback_status"] == "Paused"
+
+
+@pytest.mark.parametrize(
+    ("status", "timeout", "error_code"),
+    [
+        ("Buffering", 1.0, "invalid_playback_status"),
+        ("Playing", 0.05, "invalid_timeout"),
+        ("Playing", True, "invalid_timeout"),
+        ("Playing", float("nan"), "invalid_timeout"),
+        ("Playing", float("inf"), "invalid_timeout"),
+        ("Playing", 10**1000, "invalid_timeout"),
+    ],
+)
+def test_mpris_wait_rejects_unknown_status_and_unbounded_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    timeout: float,
+    error_code: str,
+) -> None:
+    backend, calls = _fake_backend(monkeypatch, ["vlc"])
+
+    with pytest.raises(InteractionError) as error:
+        backend.wait_for_status("vlc", status, timeout=timeout, target=TARGET)
+
+    assert error.value.code == error_code
+    assert calls == []
 
 
 def test_mpris_seek_to_uses_an_absolute_position_for_one_exact_player(

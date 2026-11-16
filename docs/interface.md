@@ -56,11 +56,14 @@ Unix-user authority over session lifecycle.
 The current shared subset includes window list/find/wait/inspect/activate and
 reversible minimized-state changes; active-window-guarded key/text/normalized
 click input; global logical-coordinate click and bounded drag; display list,
-screenshots, per-target capability reports, and MPRIS player list/inspect/control
-and absolute seek-to. Media operations use
+screenshots, per-target capability reports, and MPRIS player list/inspect/control,
+dedicated relative and absolute seek, and bounded playback-status wait. Media operations use
 the selected target's D-Bus session and exact player names; they require
 `playerctl` and do not infer a player when several are present. Playback
-controls include relative seek and a separate bounded absolute seek-to operation.
+controls include relative seek through both `media control ... seek` and the
+dedicated `media seek-by` route, bounded absolute seek-to, and waits (0.1–60
+seconds) for `Playing`, `Paused`, or `Stopped`. A status-wait timeout returns its
+last observation.
 The current live-desktop subset also includes PipeWire device/default inspection,
 verified default selection, volume/mute, and single-stream output routing. Audio
 controls require an explicit `user-desktop` target and a PipeWire Pulse
@@ -73,9 +76,9 @@ independently. X11, accessibility targets, and semantic app-level actions remain
 unimplemented.
 
 MPRIS inspection returns playback status, available title/artist/album, current
-position, and duration. Missing optional metadata is `null`; controls report
-request submission, not verified playback effect. Absolute seek is bounded to
-24 hours and is a request, not verified playback effect. Player-specific volume,
+position, and duration. Missing optional metadata is `null`; control and seek
+requests report submission, not verified playback effect. Relative and absolute
+seek are bounded to 24 hours; absolute seek starts at zero. Player-specific volume,
 arbitrary PipeWire graph patching, and audio capture are not implemented.
 
 Window-targeted input means **active-window guarded**, not compositor-atomic

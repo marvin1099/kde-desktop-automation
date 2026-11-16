@@ -353,17 +353,21 @@ kde-desktop --session user-desktop media inspect "$PLAYER" --json
 
 # Relative seek offsets may be negative; seek-to uses an absolute position in seconds.
 kde-desktop --session user-desktop media control "$PLAYER" pause --json
-kde-desktop --session user-desktop media control "$PLAYER" seek --seconds -15 --json
+kde-desktop --session user-desktop media seek-by "$PLAYER" --seconds -15 --json
 kde-desktop --session user-desktop media seek-to "$PLAYER" 180 --json
+kde-desktop --session user-desktop media wait-for-status "$PLAYER" Playing --timeout 10 --json
 ```
 
 Inspection returns playback status, available title/artist/album metadata,
 current position, and duration in seconds. Players may omit metadata or position;
 those fields are `null`. Relative `seek` offsets rewind/advance from the current
-position; `media seek-to` submits an absolute position between 0 and 86400 seconds.
-Both report that a request was submitted, not that playback changed. `playerctl`
-names that would match multiple player instances are rejected; use an exact
-listed instance name. Player-specific volume is not exposed; use the PipeWire
+position; `media seek-by` exposes the same operation as a dedicated route.
+`media seek-to` submits an absolute position between 0 and 86400 seconds. Seek
+commands report that a request was submitted, not that playback changed.
+`media wait-for-status` waits at most 60 seconds for `Playing`, `Paused`, or
+`Stopped` and includes the last status observation on timeout. `playerctl` names
+that would match multiple player instances are rejected; use an exact listed
+instance name. Player-specific volume is not exposed; use the PipeWire
 device-volume controls below.
 
 #### PipeWire devices and per-app routing

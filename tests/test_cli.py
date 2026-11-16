@@ -121,6 +121,60 @@ def test_media_seek_to_cli_passes_absolute_position_to_selected_target(monkeypat
     assert json.loads(result.stdout)["data"]["position_seconds"] == 142.75
 
 
+def test_media_seek_by_and_wait_for_status_cli_use_exact_player_and_target(monkeypatch) -> None:
+    calls = []
+
+    class FakeOperations:
+        def __init__(self, session, **_kwargs):
+            self.session = session
+
+        def media_seek_by(self, player, seconds):
+            calls.append((self.session, "seek-by", player, seconds))
+            return {"player": player, "seconds": seconds, "action": "seek-by"}
+
+        def media_wait_for_status(self, player, expected_status, *, timeout):
+            calls.append((self.session, "wait", player, expected_status, timeout))
+            return {"player": player, "playback_status": expected_status}
+
+    monkeypatch.setattr("kde_desktop_automation.cli.DesktopOperations", FakeOperations)
+
+    seek = CliRunner().invoke(
+        app,
+        [
+            "--session",
+            "agent-123456789abc",
+            "media",
+            "seek-by",
+            "vlc",
+            "--seconds",
+            "-15",
+            "--json",
+        ],
+    )
+    wait = CliRunner().invoke(
+        app,
+        [
+            "--session",
+            "agent-123456789abc",
+            "media",
+            "wait-for-status",
+            "vlc",
+            "Paused",
+            "--timeout",
+            "4",
+            "--json",
+        ],
+    )
+
+    assert seek.exit_code == 0, seek.stdout + seek.stderr
+    assert wait.exit_code == 0, wait.stdout + wait.stderr
+    assert calls == [
+        ("agent-123456789abc", "seek-by", "vlc", -15.0),
+        ("agent-123456789abc", "wait", "vlc", "Paused", 4.0),
+    ]
+    assert json.loads(wait.stdout)["data"]["playback_status"] == "Paused"
+
+
 def test_global_pointer_and_window_state_cli_use_explicit_selected_target(monkeypatch) -> None:
     calls = []
 

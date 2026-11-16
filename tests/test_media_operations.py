@@ -42,6 +42,37 @@ class FakeMprisBackend:
             "position_seconds": position_seconds,
         }
 
+    def seek_by_player(
+        self,
+        player: str,
+        seconds: float,
+        *,
+        target: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "target": target,
+            "bus": self.environ["DBUS_SESSION_BUS_ADDRESS"],
+            "player": player,
+            "seconds": seconds,
+            "action": "seek-by",
+        }
+
+    def wait_for_status(
+        self,
+        player: str,
+        expected_status: str,
+        *,
+        timeout: float,
+        target: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "target": target,
+            "bus": self.environ["DBUS_SESSION_BUS_ADDRESS"],
+            "player": player,
+            "expected_status": expected_status,
+            "timeout": timeout,
+        }
+
 
 def test_private_media_uses_only_the_selected_private_session_bus(monkeypatch) -> None:
     manager = FakeManager()
@@ -84,4 +115,38 @@ def test_media_seek_to_uses_the_selected_private_bus(monkeypatch) -> None:
         "bus": "unix:path=/agent-123456789abc/bus",
         "player": "vlc",
         "position_seconds": 75.0,
+    }
+
+
+def test_media_seek_by_uses_the_selected_private_bus(monkeypatch) -> None:
+    manager = FakeManager()
+    FakeMprisBackend.instances.clear()
+    monkeypatch.setattr("kde_desktop_automation.operations.MprisBackend", FakeMprisBackend)
+    operations = DesktopOperations("agent-123456789abc", manager=manager)  # type: ignore[arg-type]
+
+    result = operations.media_seek_by("vlc", -15.0)
+
+    assert result == {
+        "target": {"kind": "agent-session", "session_id": "agent-123456789abc"},
+        "bus": "unix:path=/agent-123456789abc/bus",
+        "player": "vlc",
+        "seconds": -15.0,
+        "action": "seek-by",
+    }
+
+
+def test_media_wait_for_status_uses_selected_player_and_target_bus(monkeypatch) -> None:
+    manager = FakeManager()
+    FakeMprisBackend.instances.clear()
+    monkeypatch.setattr("kde_desktop_automation.operations.MprisBackend", FakeMprisBackend)
+    operations = DesktopOperations("agent-123456789abc", manager=manager)  # type: ignore[arg-type]
+
+    result = operations.media_wait_for_status("vlc", "Paused", timeout=4.0)
+
+    assert result == {
+        "target": {"kind": "agent-session", "session_id": "agent-123456789abc"},
+        "bus": "unix:path=/agent-123456789abc/bus",
+        "player": "vlc",
+        "expected_status": "Paused",
+        "timeout": 4.0,
     }

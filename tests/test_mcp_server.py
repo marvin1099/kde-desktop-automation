@@ -139,6 +139,28 @@ class FakeOperations:
             "position_seconds": position_seconds,
         }
 
+    def media_seek_by(self, player: str, seconds: float) -> dict[str, Any]:
+        return {
+            "target": {"kind": self.session},
+            "player": player,
+            "seconds": seconds,
+            "action": "seek-by",
+        }
+
+    def media_wait_for_status(
+        self,
+        player: str,
+        expected_status: str,
+        *,
+        timeout: float = 10.0,
+    ) -> dict[str, Any]:
+        return {
+            "target": {"kind": self.session},
+            "player": player,
+            "expected_status": expected_status,
+            "timeout": timeout,
+        }
+
     def audio_list(self) -> dict[str, Any]:
         return {"target": {"kind": self.session}, "devices": {"sinks": [], "sources": []}}
 
@@ -241,6 +263,8 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         "kde_media_inspect",
         "kde_media_control",
         "kde_media_seek_to",
+        "kde_media_seek_by",
+        "kde_media_wait_for_status",
         "kde_audio_list",
         "kde_audio_set_default",
         "kde_audio_set_volume",
@@ -283,6 +307,8 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         "kde_media_inspect",
         "kde_media_control",
         "kde_media_seek_to",
+        "kde_media_seek_by",
+        "kde_media_wait_for_status",
         "kde_audio_list",
         "kde_audio_set_default",
         "kde_audio_set_volume",
@@ -318,6 +344,18 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
     media_seek_to_tool = next(tool for tool in tools if tool.name == "kde_media_seek_to")
     assert media_seek_to_tool.inputSchema["properties"]["position_seconds"]["minimum"] == 0.0
     assert media_seek_to_tool.inputSchema["properties"]["position_seconds"]["maximum"] == 86_400.0
+    media_seek_by_tool = next(tool for tool in tools if tool.name == "kde_media_seek_by")
+    assert media_seek_by_tool.inputSchema["properties"]["seconds"]["minimum"] == -86_400.0
+    assert media_seek_by_tool.inputSchema["properties"]["seconds"]["maximum"] == 86_400.0
+    assert media_seek_by_tool.inputSchema["properties"]["seconds"]["not"] == {"const": 0}
+    wait_status_tool = next(tool for tool in tools if tool.name == "kde_media_wait_for_status")
+    assert wait_status_tool.inputSchema["properties"]["expected_status"]["enum"] == [
+        "Playing",
+        "Paused",
+        "Stopped",
+    ]
+    assert wait_status_tool.inputSchema["properties"]["timeout"]["minimum"] == 0.1
+    assert wait_status_tool.inputSchema["properties"]["timeout"]["maximum"] == 60.0
     audio_mute_tool = next(tool for tool in tools if tool.name == "kde_audio_set_mute")
     assert {"session", "direction", "device_name", "muted"} <= set(
         audio_mute_tool.inputSchema["properties"]
@@ -414,6 +452,47 @@ def test_mcp_media_control_requires_and_uses_explicit_session() -> None:
         "seconds": -15.0,
     }
     assert FakeOperations.selected_sessions == [session_id]
+
+
+def test_mcp_media_seek_by_and_status_wait_use_explicit_selected_session() -> None:
+    server = _server()
+    session_id = "agent-123456789abc"
+
+    async def invoke_all() -> list[CallToolResult]:
+        results = await asyncio.gather(
+            server.call_tool(
+                "kde_media_seek_by",
+                {"session": session_id, "player": "vlc", "seconds": -15.0},
+            ),
+            server.call_tool(
+                "kde_media_wait_for_status",
+                {
+                    "session": session_id,
+                    "player": "vlc",
+                    "expected_status": "Paused",
+                    "timeout": 4.0,
+                },
+            ),
+        )
+        return [cast(CallToolResult, result) for result in results]
+
+    seek, wait = asyncio.run(invoke_all())
+
+    assert seek.isError is False
+    assert seek.structuredContent["data"] == {
+        "target": {"kind": session_id},
+        "player": "vlc",
+        "seconds": -15.0,
+        "action": "seek-by",
+    }
+    assert wait.isError is False
+    assert wait.structuredContent["data"] == {
+        "target": {"kind": session_id},
+        "player": "vlc",
+        "expected_status": "Paused",
+        "timeout": 4.0,
+    }
+    assert FakeOperations.selected_sessions == [session_id, session_id]
 
 
 def test_mcp_global_pointer_and_minimized_tools_use_explicit_target() -> None:

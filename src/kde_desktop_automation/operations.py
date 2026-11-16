@@ -474,6 +474,27 @@ class DesktopOperations:
             target=self._target(),
         )
 
+    def media_seek_by(self, player: str, seconds: float) -> dict[str, Any]:
+        return self._media_backend().seek_by_player(
+            player,
+            seconds,
+            target=self._target(),
+        )
+
+    def media_wait_for_status(
+        self,
+        player: str,
+        expected_status: str,
+        *,
+        timeout: float = 10.0,
+    ) -> dict[str, Any]:
+        return self._media_backend().wait_for_status(
+            player,
+            expected_status,
+            timeout=timeout,
+            target=self._target(),
+        )
+
     def audio_list(self) -> dict[str, Any]:
         return self._pipewire_audio_backend().list_audio(target=self._target())
 
@@ -679,7 +700,9 @@ def _media_capabilities() -> dict[str, bool]:
         "media.players": available,
         "media.inspect": available,
         "media.control": available,
+        "media.seek_by": available,
         "media.seek_to": available,
+        "media.wait_for_status": available,
     }
 
 

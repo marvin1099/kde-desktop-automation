@@ -664,7 +664,9 @@ class UserDesktopBackend:
                 "media.players": shutil.which("playerctl") is not None,
                 "media.inspect": shutil.which("playerctl") is not None,
                 "media.control": shutil.which("playerctl") is not None,
+                "media.seek_by": shutil.which("playerctl") is not None,
                 "media.seek_to": shutil.which("playerctl") is not None,
+                "media.wait_for_status": shutil.which("playerctl") is not None,
                 "audio.devices": shutil.which("wpctl") is not None
                 and shutil.which("pactl") is not None,
                 "audio.default": shutil.which("wpctl") is not None

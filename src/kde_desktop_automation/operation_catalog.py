@@ -56,6 +56,12 @@ SHARED_OPERATION_CATALOG = (
     OperationSurface("media_inspect", ("media", "inspect"), "kde_media_inspect"),
     OperationSurface("media_control", ("media", "control"), "kde_media_control"),
     OperationSurface("media_seek_to", ("media", "seek-to"), "kde_media_seek_to"),
+    OperationSurface("media_seek_by", ("media", "seek-by"), "kde_media_seek_by"),
+    OperationSurface(
+        "media_wait_for_status",
+        ("media", "wait-for-status"),
+        "kde_media_wait_for_status",
+    ),
     OperationSurface("audio_list", ("audio", "list"), "kde_audio_list"),
     OperationSurface("audio_set_default", ("audio", "set-default"), "kde_audio_set_default"),
     OperationSurface("audio_set_volume", ("audio", "set-volume"), "kde_audio_set_volume"),

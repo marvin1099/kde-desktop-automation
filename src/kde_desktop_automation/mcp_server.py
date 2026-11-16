@@ -105,6 +105,7 @@ Selector = Annotated[str, Field(min_length=1, max_length=512)]
 LogicalCoordinate = Annotated[int, Field(strict=True)]
 WindowFrameCoordinate = Annotated[int, Field(strict=True, ge=-32_768, le=32_768)]
 MediaAction = Literal["play", "pause", "play-pause", "stop", "next", "previous", "seek"]
+MediaPlaybackStatus = Literal["Playing", "Paused", "Stopped"]
 AudioDirection = Literal["sink", "source"]
 LiveDesktopTarget = Literal["user-desktop"]
 
@@ -633,6 +634,55 @@ def create_mcp_server(
     ) -> CallToolResult:
         """Submit an absolute position request to one explicitly selected player."""
         return _invoke(lambda: desktop_operations(session).media_seek_to(player, position_seconds))
+
+    @server.tool(
+        name="kde_media_seek_by",
+        description=(
+            "Submit a non-zero relative seek from -86400 through 86400 seconds to one exact "
+            "listed MPRIS player. Negative rewinds; positive skips ahead. The request is not "
+            "verified; inspect the player afterward."
+        ),
+        annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True),
+        structured_output=False,
+    )
+    def media_seek_by(
+        session: TargetSession,
+        player: Selector,
+        seconds: Annotated[
+            float,
+            Field(
+                ge=-86_400.0,
+                le=86_400.0,
+                json_schema_extra={"not": {"const": 0}},
+            ),
+        ],
+    ) -> CallToolResult:
+        """Submit a relative offset to one explicitly selected MPRIS player."""
+        return _invoke(lambda: desktop_operations(session).media_seek_by(player, seconds))
+
+    @server.tool(
+        name="kde_media_wait_for_status",
+        description=(
+            "Wait up to 60 seconds for one exact listed MPRIS player's status to become "
+            "Playing, Paused, or Stopped. A timeout includes the last status observation."
+        ),
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+        structured_output=False,
+    )
+    def media_wait_for_status(
+        session: TargetSession,
+        player: Selector,
+        expected_status: MediaPlaybackStatus,
+        timeout: Annotated[float, Field(ge=0.1, le=60.0)] = 10.0,
+    ) -> CallToolResult:
+        """Wait a bounded time for one explicitly selected player's playback status."""
+        return _invoke(
+            lambda: desktop_operations(session).media_wait_for_status(
+                player,
+                expected_status,
+                timeout=timeout,
+            )
+        )
 
     @server.tool(
         name="kde_audio_list",

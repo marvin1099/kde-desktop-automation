@@ -98,6 +98,7 @@ app.add_typer(audio_app, name="audio")
 
 console = Console()
 MediaControlAction = Literal["play", "pause", "play-pause", "stop", "next", "previous", "seek"]
+MediaPlaybackStatus = Literal["Playing", "Paused", "Stopped"]
 WindowMinimizedState = Literal["minimized", "restored"]
 WindowFullscreenState = Literal["fullscreen", "restored"]
 WindowMaximizedState = Literal["maximized", "restored"]
@@ -666,6 +667,53 @@ def seek_media_player_to(
     """Submit an absolute seek to one exact MPRIS player; inspect afterward to verify it."""
     _run(
         lambda: (_operations(ctx).media_seek_to(player, position_seconds), []),
+        json_output=json_output,
+    )
+
+
+@media_app.command("seek-by")
+def seek_media_player_by(
+    ctx: Context,
+    player: str = typer.Argument(..., help="Exact player name returned by media list."),
+    seconds: float = typer.Option(
+        ...,
+        "--seconds",
+        min=-86_400,
+        max=86_400,
+        help="Non-zero relative offset in seconds; negative rewinds, positive skips ahead.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Submit a dedicated relative seek to one exact MPRIS player."""
+    _run(
+        lambda: (_operations(ctx).media_seek_by(player, seconds), []),
+        json_output=json_output,
+    )
+
+
+@media_app.command("wait-for-status")
+def wait_for_media_status(
+    ctx: Context,
+    player: str = typer.Argument(..., help="Exact player name returned by media list."),
+    expected_status: MediaPlaybackStatus = typer.Argument(
+        ...,
+        help="Playback status to observe: Playing, Paused, or Stopped.",
+    ),
+    timeout: float = typer.Option(
+        10.0,
+        "--timeout",
+        min=0.1,
+        max=60.0,
+        help="Maximum wait in seconds (0.1–60).",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Wait a bounded time for one exact player's MPRIS playback status."""
+    _run(
+        lambda: (
+            _operations(ctx).media_wait_for_status(player, expected_status, timeout=timeout),
+            [],
+        ),
         json_output=json_output,
     )
 
