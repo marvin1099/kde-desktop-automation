@@ -19,6 +19,23 @@ class FakeAudioBackend:
     def list_audio(self, *, target: dict[str, Any]) -> dict[str, Any]:
         return {"target": target, "runtime_dir": self.environ["XDG_RUNTIME_DIR"]}
 
+    def wait_for_mute(
+        self,
+        direction: str,
+        device_name: str,
+        muted: bool,
+        *,
+        timeout: float,
+        target: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "target": target,
+            "direction": direction,
+            "device": device_name,
+            "muted": muted,
+            "timeout": timeout,
+        }
+
 
 def test_audio_operations_require_explicit_live_desktop_without_private_fallback(
     monkeypatch: pytest.MonkeyPatch,
@@ -49,4 +66,12 @@ def test_audio_operations_use_the_explicit_live_environment(
     assert operations.audio_list() == {
         "target": {"kind": "user-desktop"},
         "runtime_dir": "/run/user/live",
+    }
+
+    assert operations.audio_wait_for_mute("source", "usb_mic", True, timeout=3.0) == {
+        "target": {"kind": "user-desktop"},
+        "direction": "source",
+        "device": "usb_mic",
+        "muted": True,
+        "timeout": 3.0,
     }

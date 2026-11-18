@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, cast
@@ -16,6 +17,10 @@ from kde_desktop_automation.process import (
 
 _MAX_VOLUME_PERCENT = 100.0
 _PULSE_VOLUME_NORM = 65_536
+_MIN_AUDIO_WAIT_SECONDS = 0.1
+_MAX_AUDIO_WAIT_SECONDS = 60.0
+_AUDIO_POLL_INTERVAL_SECONDS = 0.2
+_AUDIO_COMMAND_TIMEOUT_SECONDS = 5.0
 
 
 class PipeWireAudioBackend:
@@ -157,6 +162,123 @@ class PipeWireAudioBackend:
             "verified": True,
         }
 
+    def wait_for_mute(
+        self,
+        direction: str,
+        device_name: str,
+        muted: bool,
+        *,
+        timeout: float,
+        target: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Wait a bounded time for one exact sink/source mute state, without mutating it."""
+        self._validate_direction(direction)
+        if not isinstance(muted, bool):
+            raise InteractionError(
+                "invalid_audio_mute_state",
+                "Expected mute state must be explicitly true or false.",
+                details={"muted": muted},
+            )
+        try:
+            timeout_seconds = (
+                float(timeout)
+                if not isinstance(timeout, bool) and isinstance(timeout, (int, float))
+                else None
+            )
+        except OverflowError:
+            timeout_seconds = None
+        if (
+            timeout_seconds is None
+            or not math.isfinite(timeout_seconds)
+            or timeout_seconds < _MIN_AUDIO_WAIT_SECONDS
+            or timeout_seconds > _MAX_AUDIO_WAIT_SECONDS
+        ):
+            raise InteractionError(
+                "invalid_timeout",
+                "Audio mute-state wait timeout must be between 0.1 and 60 seconds.",
+                details={
+                    "timeout_seconds": timeout,
+                    "minimum_seconds": _MIN_AUDIO_WAIT_SECONDS,
+                    "maximum_seconds": _MAX_AUDIO_WAIT_SECONDS,
+                },
+            )
+
+        started = time.monotonic()
+        deadline = started + timeout_seconds
+
+        def raise_timeout(
+            last_observation: dict[str, Any] | None,
+            *,
+            query_error: InteractionError | None = None,
+        ) -> None:
+            details: dict[str, Any] = {
+                "direction": direction,
+                "device": device_name,
+                "expected_muted": muted,
+                "timeout_seconds": timeout_seconds,
+                "last_observation": last_observation,
+            }
+            if query_error is not None:
+                details["last_query_error"] = query_error.as_dict()
+            raise InteractionError(
+                "audio_wait_timeout",
+                "The requested device mute state was not observed before the timeout.",
+                details=details,
+            ) from query_error
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise_timeout(None)
+        try:
+            server_info = self._require_pipewire(
+                timeout=min(_AUDIO_COMMAND_TIMEOUT_SECONDS, remaining / 3)
+            )
+        except InteractionError as exc:
+            if exc.code == "backend_timeout":
+                raise_timeout(None, query_error=exc)
+            raise
+
+        default_name = server_info["default_sink" if direction == "sink" else "default_source"]
+        last_observation: dict[str, Any] | None = None
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise_timeout(last_observation)
+            try:
+                records = self._json_list(
+                    "sinks" if direction == "sink" else "sources",
+                    timeout=min(_AUDIO_COMMAND_TIMEOUT_SECONDS, remaining),
+                )
+            except InteractionError as exc:
+                if exc.code == "backend_timeout":
+                    raise_timeout(last_observation, query_error=exc)
+                raise
+            devices = self._normalize_devices(records, direction, default_name)
+            device = self._resolve_device(
+                {"devices": {direction + "s": devices}},
+                direction,
+                device_name,
+            )
+            last_observation = {
+                "device": device,
+                "observed_at": datetime.now(UTC).isoformat(),
+            }
+            if device["muted"] is muted:
+                return {
+                    "target": target,
+                    "action": "wait-for-mute",
+                    "direction": direction,
+                    "expected_muted": muted,
+                    "device": device,
+                    "observed_at": last_observation["observed_at"],
+                    "waited_seconds": time.monotonic() - started,
+                    "matched": True,
+                }
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise_timeout(last_observation)
+            time.sleep(min(_AUDIO_POLL_INTERVAL_SECONDS, remaining))
+
     def route_stream(
         self,
         stream_id: int,
@@ -189,6 +311,12 @@ class PipeWireAudioBackend:
 
         before = self._snapshot()
         sink = self._resolve_device(before, "sink", sink_name)
+        if sink["is_monitor"]:
+            raise InteractionError(
+                "audio_monitor_not_routable",
+                "A monitor endpoint cannot be used as an output sink.",
+                details={"sink": sink_name},
+            )
         stream = self._resolve_stream(before, stream_id)
         self._verify_stream_identity(
             stream,
@@ -249,10 +377,10 @@ class PipeWireAudioBackend:
             "streams": streams,
         }
 
-    def _require_pipewire(self) -> dict[str, str | None]:
-        status = run_command([self.wpctl, "status", "--name"], env=self.environ, timeout=4.0)
+    def _require_pipewire(self, *, timeout: float = 4.0) -> dict[str, str | None]:
+        status = run_command([self.wpctl, "status", "--name"], env=self.environ, timeout=timeout)
         require_success(status)
-        result = run_command([self.pactl, "info"], env=self.environ, timeout=4.0)
+        result = run_command([self.pactl, "info"], env=self.environ, timeout=timeout)
         require_success(result)
         values: dict[str, str] = {}
         for line in result.stdout.splitlines():
@@ -277,8 +405,13 @@ class PipeWireAudioBackend:
             "default_source": values.get("Default Source"),
         }
 
-    def _json_list(self, object_type: str) -> list[dict[str, Any]]:
-        result = self._pactl("--format=json", "list", object_type)
+    def _json_list(
+        self,
+        object_type: str,
+        *,
+        timeout: float = _AUDIO_COMMAND_TIMEOUT_SECONDS,
+    ) -> list[dict[str, Any]]:
+        result = self._pactl("--format=json", "list", object_type, timeout=timeout)
         try:
             records = json.loads(result.stdout)
         except json.JSONDecodeError as exc:
@@ -295,8 +428,12 @@ class PipeWireAudioBackend:
             )
         return records
 
-    def _pactl(self, *args: str) -> CommandResult:
-        result = run_command([self.pactl, *args], env=self.environ, timeout=5.0)
+    def _pactl(
+        self,
+        *args: str,
+        timeout: float = _AUDIO_COMMAND_TIMEOUT_SECONDS,
+    ) -> CommandResult:
+        result = run_command([self.pactl, *args], env=self.environ, timeout=timeout)
         return require_success(result)
 
     def _normalize_devices(

@@ -671,6 +671,22 @@ class DesktopOperations:
             target=self._target(),
         )
 
+    def audio_wait_for_mute(
+        self,
+        direction: str,
+        device_name: str,
+        muted: bool,
+        *,
+        timeout: float = 10.0,
+    ) -> dict[str, Any]:
+        return self._pipewire_audio_backend().wait_for_mute(
+            direction,
+            device_name,
+            muted,
+            timeout=timeout,
+            target=self._target(),
+        )
+
     def audio_route_stream(
         self,
         stream_id: int,
@@ -862,5 +878,6 @@ def _audio_capabilities(*, live_target: bool) -> dict[str, bool]:
         "audio.default": available,
         "audio.volume": available,
         "audio.mute": available,
+        "audio.wait_for_mute": available,
         "audio.route_stream": available,
     }

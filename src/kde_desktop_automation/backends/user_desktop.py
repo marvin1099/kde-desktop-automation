@@ -675,6 +675,8 @@ class UserDesktopBackend:
                 and shutil.which("pactl") is not None,
                 "audio.mute": shutil.which("wpctl") is not None
                 and shutil.which("pactl") is not None,
+                "audio.wait_for_mute": shutil.which("wpctl") is not None
+                and shutil.which("pactl") is not None,
                 "audio.route_stream": shutil.which("wpctl") is not None
                 and shutil.which("pactl") is not None,
             },

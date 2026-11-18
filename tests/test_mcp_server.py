@@ -206,6 +206,22 @@ class FakeOperations:
             "muted": muted,
         }
 
+    def audio_wait_for_mute(
+        self,
+        direction: str,
+        device_name: str,
+        muted: bool,
+        *,
+        timeout: float = 10.0,
+    ) -> dict[str, Any]:
+        return {
+            "target": {"kind": self.session},
+            "direction": direction,
+            "device": device_name,
+            "muted": muted,
+            "timeout": timeout,
+        }
+
     def audio_route_stream(
         self,
         stream_id: int,
@@ -291,6 +307,7 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         "kde_audio_set_default",
         "kde_audio_set_volume",
         "kde_audio_set_mute",
+        "kde_audio_wait_for_mute",
         "kde_audio_route_stream",
         "kde_screenshot",
         "kde_screenshot_window",
@@ -335,6 +352,7 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         "kde_audio_set_default",
         "kde_audio_set_volume",
         "kde_audio_set_mute",
+        "kde_audio_wait_for_mute",
         "kde_audio_route_stream",
         "kde_screenshot",
         "kde_screenshot_window",
@@ -383,6 +401,9 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         audio_mute_tool.inputSchema["properties"]
     )
     assert audio_mute_tool.inputSchema["properties"]["direction"]["enum"] == ["sink", "source"]
+    audio_wait_tool = next(tool for tool in tools if tool.name == "kde_audio_wait_for_mute")
+    assert audio_wait_tool.inputSchema["properties"]["timeout"]["minimum"] == 0.1
+    assert audio_wait_tool.inputSchema["properties"]["timeout"]["maximum"] == 60.0
     audio_list_tool = next(tool for tool in tools if tool.name == "kde_audio_list")
     assert audio_list_tool.inputSchema["properties"]["session"]["const"] == "user-desktop"
     volume_tool = next(tool for tool in tools if tool.name == "kde_audio_set_volume")
@@ -726,6 +747,34 @@ def test_mcp_audio_routing_requires_and_uses_explicit_live_target() -> None:
         "sink_name": "headphones",
         "application_name": "Firefox",
         "process_id": 555,
+    }
+    assert FakeOperations.selected_sessions == ["user-desktop"]
+
+
+def test_mcp_audio_mute_wait_is_read_only_and_requires_live_target() -> None:
+    server = _server()
+
+    result = asyncio.run(
+        server.call_tool(
+            "kde_audio_wait_for_mute",
+            {
+                "session": "user-desktop",
+                "direction": "source",
+                "device_name": "Microphone",
+                "muted": True,
+                "timeout": 4.5,
+            },
+        )
+    )
+
+    assert isinstance(result, CallToolResult)
+    assert result.isError is False
+    assert result.structuredContent["data"] == {
+        "target": {"kind": "user-desktop"},
+        "direction": "source",
+        "device": "Microphone",
+        "muted": True,
+        "timeout": 4.5,
     }
     assert FakeOperations.selected_sessions == ["user-desktop"]
 

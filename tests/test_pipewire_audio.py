@@ -44,6 +44,14 @@ def _state() -> dict[str, Any]:
                 "mute": False,
                 "volume": _volume(100),
             },
+            {
+                "index": 9,
+                "name": "combined_output",
+                "description": "Virtual Combined Sink",
+                "state": "IDLE",
+                "mute": False,
+                "volume": _volume(100),
+            },
         ],
         "sources": [
             {
@@ -251,6 +259,71 @@ def test_route_stream_checks_identity_and_moves_only_that_output_stream(
     assert ("move-sink-input", "17", "headphones") in calls
 
 
+def test_route_stream_allows_a_listed_combined_sink(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, calls, state_data = _fake_backend(monkeypatch)
+
+    result = backend.route_stream(
+        17,
+        "combined_output",
+        application_name="Firefox",
+        target=TARGET,
+    )
+
+    assert result["effective_sink"]["name"] == "combined_output"
+    assert result["verified"] is True
+    assert state_data["sink_inputs"][0]["sink"] == 9
+    assert state_data["sink_inputs"][1]["sink"] == 1
+    assert ("move-sink-input", "17", "combined_output") in calls
+
+
+def test_route_stream_rejects_a_monitor_endpoint_as_output_sink(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_data = _state()
+    state_data["sinks"].append(
+        {
+            "index": 10,
+            "name": "loopback.monitor",
+            "description": "Monitor endpoint",
+            "state": "IDLE",
+            "mute": False,
+            "volume": _volume(100),
+            "monitor_of_sink": 1,
+        }
+    )
+    backend, calls, _state_data = _fake_backend(monkeypatch, state_data)
+
+    with pytest.raises(InteractionError) as error:
+        backend.route_stream(
+            17,
+            "loopback.monitor",
+            application_name="Firefox",
+            target=TARGET,
+        )
+
+    assert error.value.code == "audio_monitor_not_routable"
+    assert not any(call[0] == "move-sink-input" for call in calls)
+
+
+def test_route_stream_rejects_a_source_monitor_as_output_sink(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, calls, _state_data = _fake_backend(monkeypatch)
+
+    with pytest.raises(InteractionError) as error:
+        backend.route_stream(
+            17,
+            "speakers.monitor",
+            application_name="Firefox",
+            target=TARGET,
+        )
+
+    assert error.value.code == "audio_device_not_found"
+    assert not any(call[0] == "move-sink-input" for call in calls)
+
+
 def test_route_stream_fails_closed_if_stream_identity_changed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -291,6 +364,75 @@ def test_route_stream_rechecks_identity_after_move(
         )
 
     assert error.value.code == "audio_stream_identity_mismatch"
+
+
+def test_wait_for_mute_returns_immediately_when_exact_device_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, calls, _state_data = _fake_backend(monkeypatch)
+
+    result = backend.wait_for_mute("sink", "speakers", False, timeout=1.0, target=TARGET)
+
+    assert result["target"] == TARGET
+    assert result["action"] == "wait-for-mute"
+    assert result["device"]["name"] == "speakers"
+    assert result["matched"] is True
+    assert not any(call[0].startswith(("set-", "move-")) for call in calls)
+
+
+def test_wait_for_mute_polls_until_the_exact_device_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, calls, state_data = _fake_backend(monkeypatch)
+    sleep_calls: list[float] = []
+
+    def change_mute_state(seconds: float) -> None:
+        sleep_calls.append(seconds)
+        state_data["sinks"][0]["mute"] = True
+
+    monkeypatch.setattr(pipewire_audio.time, "sleep", change_mute_state)
+
+    result = backend.wait_for_mute("sink", "speakers", True, timeout=1.0, target=TARGET)
+
+    assert result["device"]["muted"] is True
+    assert result["matched"] is True
+    assert sleep_calls
+    assert not any(call[0].startswith(("set-", "move-")) for call in calls)
+
+
+def test_wait_for_mute_timeout_preserves_last_observation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, _calls, _state_data = _fake_backend(monkeypatch)
+    monotonic_now = [0.0]
+
+    monkeypatch.setattr(pipewire_audio.time, "monotonic", lambda: monotonic_now[0])
+
+    def advance_clock(seconds: float) -> None:
+        monotonic_now[0] += seconds
+
+    monkeypatch.setattr(pipewire_audio.time, "sleep", advance_clock)
+
+    with pytest.raises(InteractionError) as error:
+        backend.wait_for_mute("sink", "speakers", True, timeout=0.5, target=TARGET)
+
+    assert error.value.code == "audio_wait_timeout"
+    assert error.value.details["last_observation"]["device"]["name"] == "speakers"
+    assert error.value.details["last_observation"]["device"]["muted"] is False
+
+
+@pytest.mark.parametrize("timeout", [0, 0.09, 60.01, float("nan"), float("inf"), True])
+def test_wait_for_mute_rejects_invalid_timeouts_without_querying(
+    monkeypatch: pytest.MonkeyPatch,
+    timeout: float,
+) -> None:
+    backend, calls, _state_data = _fake_backend(monkeypatch)
+
+    with pytest.raises(InteractionError) as error:
+        backend.wait_for_mute("sink", "speakers", True, timeout=timeout, target=TARGET)
+
+    assert error.value.code == "invalid_timeout"
+    assert calls == []
 
 
 def test_audio_volume_is_bounded_to_safe_percentages(

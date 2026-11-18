@@ -530,3 +530,4 @@ def test_private_capabilities_do_not_advertise_live_pipewire_controls() -> None:
 
     assert result["capabilities"]["audio.devices"] is False
     assert result["capabilities"]["audio.route_stream"] is False
+    assert result["capabilities"]["audio.wait_for_mute"] is False

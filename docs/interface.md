@@ -65,10 +65,13 @@ dedicated `media seek-by` route, bounded absolute seek-to, and waits (0.1–60
 seconds) for `Playing`, `Paused`, or `Stopped`. A status-wait timeout returns its
 last observation.
 The current live-desktop subset also includes PipeWire device/default inspection,
-verified default selection, volume/mute, and single-stream output routing. Audio
-controls require an explicit `user-desktop` target and a PipeWire Pulse
-compatibility server; private KWin sessions do not provide an isolated audio
-server. The launch commands accept executable argument vectors (never shell
+verified default selection, volume/mute, a bounded read-only mute-state wait,
+and single-stream output routing. Audio controls require an explicit
+`user-desktop` target and a PipeWire Pulse compatibility server; private KWin
+sessions do not provide an isolated audio server. Stream routing moves one
+identity-checked sink-input to an exact listed sink (including combined sinks),
+rejects monitor endpoints, and does not expose arbitrary port-link edits. The
+launch commands accept executable argument vectors (never shell
 strings) and are not security boundaries; a future user-facing launcher should
 prefer validated desktop-entry IDs. Both backends' input remains best-effort:
 KWin gives no application-delivery acknowledgement, so verify effects
@@ -79,7 +82,10 @@ MPRIS inspection returns playback status, available title/artist/album, current
 position, and duration. Missing optional metadata is `null`; control and seek
 requests report submission, not verified playback effect. Relative and absolute
 seek are bounded to 24 hours; absolute seek starts at zero. Player-specific volume,
-arbitrary PipeWire graph patching, and audio capture are not implemented.
+arbitrary PipeWire graph patching, and audio capture are not implemented. The
+mute-state wait polls for at most 60 seconds and retains its last observation on
+timeout; routing changes only the selected output stream, not the virtual-device
+port wiring.
 
 Window-targeted input means **active-window guarded**, not compositor-atomic
 per-window routing. Key, text, and normalized click requests require the target
@@ -600,7 +606,8 @@ The stdio server exposes typed tools over `DesktopOperations`:
 `kde_display_list`, `kde_media_list`, `kde_media_inspect`, `kde_media_control`,
 `kde_media_seek_to`,
 `kde_audio_list`, `kde_audio_set_default`, `kde_audio_set_volume`,
-`kde_audio_set_mute`, `kde_audio_route_stream`, `kde_screenshot`, and
+`kde_audio_set_mute`, `kde_audio_wait_for_mute`, `kde_audio_route_stream`,
+`kde_screenshot`, and
 `kde_capabilities`. Private lifecycle tools cover
 list/create/show/use/stop/launch. Every MCP desktop tool requires a
 `session` field containing a managed ID or explicit `user-desktop`; CLI defaults

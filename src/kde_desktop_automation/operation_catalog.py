@@ -66,6 +66,11 @@ SHARED_OPERATION_CATALOG = (
     OperationSurface("audio_set_default", ("audio", "set-default"), "kde_audio_set_default"),
     OperationSurface("audio_set_volume", ("audio", "set-volume"), "kde_audio_set_volume"),
     OperationSurface("audio_set_mute", ("audio", "set-mute"), "kde_audio_set_mute"),
+    OperationSurface(
+        "audio_wait_for_mute",
+        ("audio", "wait-for-mute"),
+        "kde_audio_wait_for_mute",
+    ),
     OperationSurface("audio_route_stream", ("audio", "route-stream"), "kde_audio_route_stream"),
     OperationSurface("screenshot", ("screenshot",), "kde_screenshot"),
     OperationSurface("capabilities", ("capabilities",), "kde_capabilities"),

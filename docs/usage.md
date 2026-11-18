@@ -398,18 +398,29 @@ kde-desktop --session user-desktop audio list --json
 kde-desktop --session user-desktop audio set-default sink 'alsa_output.headphones' --json
 kde-desktop --session user-desktop audio set-volume source 'alsa_input.usb_mic' 50 --json
 kde-desktop --session user-desktop audio set-mute source 'alsa_input.usb_mic' mute --json
+kde-desktop --session user-desktop audio wait-for-mute source 'alsa_input.usb_mic' mute \
+  --timeout 10 --json
 
 # Move just one listed output stream; the ID and application name are both checked.
-kde-desktop --session user-desktop audio route-stream 42 'alsa_output.headphones' \
+kde-desktop --session user-desktop audio route-stream 42 'Games' \
   --application Firefox --process-id 1234 --json
 ```
+
+`wait-for-mute` is read-only: it polls one exact listed sink/source for a
+requested mute state for 0.1–60 seconds and returns the last observation on
+timeout. It does not set or toggle mute. `route-stream` moves one verified app
+stream to an exact listed output sink using the PulseAudio compatibility API.
+Combined/virtual sinks are valid destinations; monitor endpoints are rejected.
+This is not raw PipeWire patchbay control: it does not create or remove
+arbitrary port links, so existing virtual-device wiring is left outside the
+operation's mutation scope.
 
 Changing the default affects new auto-connected streams; existing streams may
 stay on their current output. Use `route-stream` for one existing stream. If a
 browser has several streams, list them and choose the specific stream ID; the
 operation never moves all streams based only on a broad app-name match. Audio
-listing can reveal active application names, and mute/volume/default changes
-affect the user's real devices.
+listing can reveal active application names, and mute/volume/default/routing
+changes affect the user's real devices.
 
 ### MCP server
 

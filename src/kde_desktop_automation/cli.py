@@ -911,6 +911,38 @@ def set_audio_mute(
     )
 
 
+@audio_app.command("wait-for-mute")
+def wait_for_audio_mute(
+    ctx: Context,
+    direction: Literal["sink", "source"] = typer.Argument(
+        ..., help="sink for output or source for input."
+    ),
+    device_name: str = typer.Argument(..., help="Exact device name returned by audio list."),
+    state: Literal["mute", "unmute"] = typer.Argument(..., help="Mute state to observe."),
+    timeout: float = typer.Option(
+        10.0,
+        "--timeout",
+        min=0.1,
+        max=60.0,
+        help="Maximum wait in seconds (0.1–60).",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Wait for an exact device mute state; live only, use --session user-desktop before audio."""
+    _run(
+        lambda: (
+            _operations(ctx).audio_wait_for_mute(
+                direction,
+                device_name,
+                state == "mute",
+                timeout=timeout,
+            ),
+            [],
+        ),
+        json_output=json_output,
+    )
+
+
 @audio_app.command("route-stream")
 def route_audio_stream(
     ctx: Context,

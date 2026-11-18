@@ -846,10 +846,37 @@ def create_mcp_server(
         )
 
     @server.tool(
+        name="kde_audio_wait_for_mute",
+        description=(
+            "Wait, without changing state, for one exact live sink/source to be muted or unmuted; "
+            "requires session='user-desktop'."
+        ),
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+        structured_output=False,
+    )
+    def audio_wait_for_mute(
+        session: LiveDesktopTarget,
+        direction: AudioDirection,
+        device_name: Selector,
+        muted: bool,
+        timeout: Annotated[float, Field(ge=0.1, le=60.0)] = 10.0,
+    ) -> CallToolResult:
+        """Wait a bounded time for one exact device mute state; this tool never toggles mute."""
+        return _invoke(
+            lambda: desktop_operations(session).audio_wait_for_mute(
+                direction,
+                device_name,
+                muted,
+                timeout=timeout,
+            )
+        )
+
+    @server.tool(
         name="kde_audio_route_stream",
         description=(
-            "Move one live output stream to a sink after checking its exact stream ID and "
-            "application name; requires session='user-desktop'."
+            "Move one live output stream to an exact listed sink after checking its stream ID and "
+            "application name. Combined sinks are allowed; monitor endpoints and arbitrary "
+            "PipeWire link edits are not. Requires session='user-desktop'."
         ),
         annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True),
         structured_output=False,

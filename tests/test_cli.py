@@ -450,7 +450,7 @@ def test_media_list_and_inspect_cli_return_json_for_selected_target(monkeypatch)
     assert json.loads(inspected.stdout)["data"]["position_seconds"] == 3.5
 
 
-def test_audio_mute_and_route_cli_use_explicit_device_and_stream_guards(monkeypatch) -> None:
+def test_audio_mute_wait_and_route_cli_use_explicit_selectors(monkeypatch) -> None:
     calls = []
 
     class FakeOperations:
@@ -459,6 +459,10 @@ def test_audio_mute_and_route_cli_use_explicit_device_and_stream_guards(monkeypa
 
         def audio_set_mute(self, direction, device_name, muted):
             calls.append((self.session, "mute", direction, device_name, muted))
+            return {"muted": muted}
+
+        def audio_wait_for_mute(self, direction, device_name, muted, *, timeout):
+            calls.append((self.session, "wait-mute", direction, device_name, muted, timeout))
             return {"muted": muted}
 
         def audio_route_stream(
@@ -490,6 +494,21 @@ def test_audio_mute_and_route_cli_use_explicit_device_and_stream_guards(monkeypa
             "--json",
         ],
     )
+    waited = runner.invoke(
+        app,
+        [
+            "--session",
+            "user-desktop",
+            "audio",
+            "wait-for-mute",
+            "source",
+            "usb_mic",
+            "unmute",
+            "--timeout",
+            "3",
+            "--json",
+        ],
+    )
     routed = runner.invoke(
         app,
         [
@@ -508,9 +527,11 @@ def test_audio_mute_and_route_cli_use_explicit_device_and_stream_guards(monkeypa
     )
 
     assert muted.exit_code == 0, muted.stdout + muted.stderr
+    assert waited.exit_code == 0, waited.stdout + waited.stderr
     assert routed.exit_code == 0, routed.stdout + routed.stderr
     assert calls == [
         ("user-desktop", "mute", "source", "usb_mic", True),
+        ("user-desktop", "wait-mute", "source", "usb_mic", False, 3.0),
         ("user-desktop", "route", 17, "headphones", "Firefox", 555),
     ]
 
