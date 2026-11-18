@@ -67,7 +67,9 @@ untrusted applications in them: they are not an OS-level sandbox.
 ## MCP server
 
 After `uv sync`, configure your MCP client to launch `kde-desktop-mcp` from this
-checkout:
+checkout. OpenCode users in this repository are configured by the project-local
+`opencode.json`, which starts the stdio server with `uv run kde-desktop-mcp`.
+Other MCP clients can use:
 
 ```json
 {
