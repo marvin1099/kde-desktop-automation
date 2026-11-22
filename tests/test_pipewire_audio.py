@@ -400,6 +400,42 @@ def test_wait_for_mute_polls_until_the_exact_device_matches(
     assert not any(call[0].startswith(("set-", "move-")) for call in calls)
 
 
+@pytest.mark.parametrize(
+    "transient_command",
+    [
+        ("status", "--name"),
+        ("--format=json", "list", "sinks"),
+    ],
+)
+def test_wait_for_mute_retries_transient_probe_timeouts(
+    monkeypatch: pytest.MonkeyPatch,
+    transient_command: tuple[str, ...],
+) -> None:
+    backend, calls, _state_data = _fake_backend(monkeypatch)
+    original_run_command = pipewire_audio.run_command
+    failed_commands: set[tuple[str, ...]] = set()
+
+    def timeout_once(argv, *, env, timeout):
+        command = tuple(argv[1:])
+        if command == transient_command and command not in failed_commands:
+            failed_commands.add(command)
+            raise InteractionError(
+                "backend_timeout",
+                "A transient audio query timed out.",
+                details={"timeout_seconds": timeout},
+            )
+        return original_run_command(argv, env=env, timeout=timeout)
+
+    monkeypatch.setattr(pipewire_audio, "run_command", timeout_once)
+    monkeypatch.setattr(pipewire_audio.time, "sleep", lambda _seconds: None)
+
+    result = backend.wait_for_mute("sink", "speakers", False, timeout=2.0, target=TARGET)
+
+    assert result["matched"] is True
+    assert failed_commands == {transient_command}
+    assert calls.count(transient_command) >= 1
+
+
 def test_wait_for_mute_timeout_preserves_last_observation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

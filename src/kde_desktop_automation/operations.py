@@ -265,7 +265,7 @@ class DesktopOperations:
         fullscreen: bool = False,
         fills_display: bool = False,
     ) -> dict[str, Any]:
-        if timeout < 0.1 or timeout > 60.0:
+        if not _is_finite_number(timeout) or timeout < 0.1 or timeout > 60.0:
             raise InteractionError(
                 "invalid_timeout",
                 "Window wait timeout must be between 0.1 and 60 seconds.",

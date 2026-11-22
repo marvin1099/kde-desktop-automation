@@ -267,3 +267,24 @@ def test_window_wait_rejects_conflicting_presentation_predicates() -> None:
             fullscreen=True,
             fills_display=True,
         )
+
+
+@pytest.mark.parametrize(
+    "timeout",
+    [float("nan"), float("inf"), float("-inf"), 0.09, 60.01, True, 10**1000],
+)
+def test_window_wait_rejects_nonfinite_and_out_of_range_timeouts(
+    timeout: float,
+) -> None:
+    manager = FakeManager([_window(True)])
+
+    with pytest.raises(InteractionError) as error:
+        _operations(manager).window_wait(
+            app_id="org.example.Game",
+            title=None,
+            timeout=timeout,
+            fullscreen=True,
+        )
+
+    assert error.value.code == "invalid_timeout"
+    assert manager.calls == 0

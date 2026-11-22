@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -170,6 +171,11 @@ def _invoke(action: Callable[[], dict[str, Any]]) -> CallToolResult:
         return _failure(exc)
 
 
+async def _invoke_in_worker(action: Callable[[], dict[str, Any]]) -> CallToolResult:
+    """Run blocking bounded waits off the MCP event loop."""
+    return await asyncio.to_thread(_invoke, action)
+
+
 def _window_precondition_kwargs(
     expected_app_id: str | None,
     expected_pid: int | None,
@@ -332,7 +338,7 @@ def create_mcp_server(
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
         structured_output=False,
     )
-    def window_wait(
+    async def window_wait(
         session: TargetSession,
         app_id: Annotated[str | None, Field(min_length=1, max_length=512)] = None,
         title: Annotated[str | None, Field(min_length=1, max_length=512)] = None,
@@ -341,7 +347,7 @@ def create_mcp_server(
         fills_display: bool = False,
     ) -> CallToolResult:
         """Wait for a unique window match and optional fullscreen state; ambiguity fails."""
-        return _invoke(
+        return await _invoke_in_worker(
             lambda: desktop_operations(session).window_wait(
                 app_id=app_id,
                 title=title,
@@ -763,14 +769,14 @@ def create_mcp_server(
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
         structured_output=False,
     )
-    def media_wait_for_status(
+    async def media_wait_for_status(
         session: TargetSession,
         player: Selector,
         expected_status: MediaPlaybackStatus,
         timeout: Annotated[float, Field(ge=0.1, le=60.0)] = 10.0,
     ) -> CallToolResult:
         """Wait a bounded time for one explicitly selected player's playback status."""
-        return _invoke(
+        return await _invoke_in_worker(
             lambda: desktop_operations(session).media_wait_for_status(
                 player,
                 expected_status,
@@ -854,7 +860,7 @@ def create_mcp_server(
         annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
         structured_output=False,
     )
-    def audio_wait_for_mute(
+    async def audio_wait_for_mute(
         session: LiveDesktopTarget,
         direction: AudioDirection,
         device_name: Selector,
@@ -862,7 +868,7 @@ def create_mcp_server(
         timeout: Annotated[float, Field(ge=0.1, le=60.0)] = 10.0,
     ) -> CallToolResult:
         """Wait a bounded time for one exact device mute state; this tool never toggles mute."""
-        return _invoke(
+        return await _invoke_in_worker(
             lambda: desktop_operations(session).audio_wait_for_mute(
                 direction,
                 device_name,

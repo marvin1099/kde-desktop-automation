@@ -4,8 +4,10 @@ import asyncio
 import base64
 import sys
 from pathlib import Path
+from threading import Event
 from typing import Any, cast
 
+import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.server.fastmcp import FastMCP
@@ -31,6 +33,24 @@ class FakeOperations:
                 "No private default is set.",
             )
         return {"target": {"kind": self.session}}
+
+    def window_wait(
+        self,
+        *,
+        app_id: str | None,
+        title: str | None,
+        timeout: float,
+        fullscreen: bool,
+        fills_display: bool,
+    ) -> dict[str, Any]:
+        return {
+            "target": {"kind": self.session},
+            "app_id": app_id,
+            "title": title,
+            "timeout": timeout,
+            "fullscreen": fullscreen,
+            "fills_display": fills_display,
+        }
 
     def window_set_minimized(
         self,
@@ -543,6 +563,110 @@ def test_mcp_media_seek_by_and_status_wait_use_explicit_selected_session() -> No
         "timeout": 4.0,
     }
     assert FakeOperations.selected_sessions == [session_id, session_id]
+
+
+@pytest.mark.parametrize(
+    ("wait_tool", "wait_args"),
+    [
+        ("kde_window_wait", {"app_id": "org.example.App", "timeout": 5.0}),
+        (
+            "kde_media_wait_for_status",
+            {"player": "vlc", "expected_status": "Playing", "timeout": 5.0},
+        ),
+        (
+            "kde_audio_wait_for_mute",
+            {
+                "direction": "sink",
+                "device_name": "Games",
+                "muted": True,
+                "timeout": 5.0,
+            },
+        ),
+    ],
+)
+def test_mcp_bounded_waits_do_not_block_other_tool_calls(
+    wait_tool: str,
+    wait_args: dict[str, Any],
+) -> None:
+    started = Event()
+    release = Event()
+
+    class BlockingWaitOperations(FakeOperations):
+        def _block_wait(self) -> None:
+            started.set()
+            release.wait(timeout=2.0)
+
+        def window_wait(
+            self,
+            *,
+            app_id: str | None,
+            title: str | None,
+            timeout: float,
+            fullscreen: bool,
+            fills_display: bool,
+        ) -> dict[str, Any]:
+            self._block_wait()
+            return super().window_wait(
+                app_id=app_id,
+                title=title,
+                timeout=timeout,
+                fullscreen=fullscreen,
+                fills_display=fills_display,
+            )
+
+        def media_wait_for_status(
+            self,
+            player: str,
+            expected_status: str,
+            *,
+            timeout: float = 10.0,
+        ) -> dict[str, Any]:
+            self._block_wait()
+            return super().media_wait_for_status(player, expected_status, timeout=timeout)
+
+        def audio_wait_for_mute(
+            self,
+            direction: str,
+            device_name: str,
+            muted: bool,
+            *,
+            timeout: float = 10.0,
+        ) -> dict[str, Any]:
+            self._block_wait()
+            return super().audio_wait_for_mute(
+                direction,
+                device_name,
+                muted,
+                timeout=timeout,
+            )
+
+    server = create_mcp_server(operations_factory=cast(OperationsFactory, BlockingWaitOperations))
+    arguments = {"session": "user-desktop", **wait_args}
+
+    async def invoke_concurrently() -> tuple[CallToolResult, CallToolResult]:
+        wait_task = asyncio.create_task(server.call_tool(wait_tool, arguments))
+        try:
+            assert await asyncio.wait_for(
+                asyncio.to_thread(started.wait, timeout=1.0),
+                timeout=1.5,
+            )
+            quick_result = cast(
+                CallToolResult,
+                await asyncio.wait_for(
+                    server.call_tool("kde_audio_list", {"session": "user-desktop"}),
+                    timeout=0.5,
+                ),
+            )
+        finally:
+            release.set()
+        wait_result = cast(CallToolResult, await asyncio.wait_for(wait_task, timeout=1.5))
+        return wait_result, quick_result
+
+    wait_result, quick_result = asyncio.run(invoke_concurrently())
+
+    assert wait_result.isError is False
+    assert quick_result.isError is False
+    assert quick_result.structuredContent["data"]["devices"] == {"sinks": [], "sources": []}
 
 
 def test_mcp_global_pointer_and_minimized_tools_use_explicit_target() -> None:

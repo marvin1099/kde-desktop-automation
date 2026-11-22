@@ -171,25 +171,37 @@ class MprisBackend:
 
         started = time.monotonic()
         deadline = started + timeout_seconds
-        try:
-            selected = self._resolve_player(
-                player,
-                timeout=min(_PLAYER_COMMAND_TIMEOUT_SECONDS, timeout_seconds),
-            )
-        except InteractionError as exc:
-            if exc.code != "backend_timeout":
-                raise
-            raise InteractionError(
-                "media_wait_timeout",
-                "The selected MPRIS player could not be resolved before the timeout.",
-                details={
+        selected: str | None = None
+        selector_resolution_error: dict[str, Any] | None = None
+        while selected is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                details: dict[str, Any] = {
                     "player": player,
                     "expected_playback_status": expected_status,
                     "timeout_seconds": timeout_seconds,
+                    "waited_seconds": round(time.monotonic() - started, 3),
                     "last_observation": None,
-                    "selector_resolution_error": exc.as_dict(),
-                },
-            ) from exc
+                }
+                if selector_resolution_error is not None:
+                    details["selector_resolution_error"] = selector_resolution_error
+                raise InteractionError(
+                    "media_wait_timeout",
+                    "The selected MPRIS player could not be resolved before the timeout.",
+                    details=details,
+                )
+            try:
+                selected = self._resolve_player(
+                    player,
+                    timeout=min(_PLAYER_COMMAND_TIMEOUT_SECONDS, remaining),
+                )
+            except InteractionError as exc:
+                if exc.code != "backend_timeout":
+                    raise
+                selector_resolution_error = exc.as_dict()
+                remaining = deadline - time.monotonic()
+                if remaining > 0:
+                    time.sleep(min(_MEDIA_POLL_INTERVAL_SECONDS, remaining))
 
         last_observation: dict[str, Any] | None = None
         while True:

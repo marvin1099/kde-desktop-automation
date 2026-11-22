@@ -178,6 +178,34 @@ def test_mpris_wait_for_status_polls_one_exact_player_until_match(
     assert result["last_observation"]["playback_status"] == "Playing"
 
 
+def test_mpris_wait_retries_transient_player_resolution_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend, calls = _fake_backend(monkeypatch, ["vlc"], statuses=["Playing"])
+    original_run_command = media_players.run_command
+    did_timeout = False
+
+    def timeout_once(argv, *, env, timeout):
+        nonlocal did_timeout
+        if tuple(argv[1:]) == ("--list-all",) and not did_timeout:
+            did_timeout = True
+            raise InteractionError(
+                "backend_timeout",
+                "A transient player-list query timed out.",
+                details={"timeout_seconds": timeout},
+            )
+        return original_run_command(argv, env=env, timeout=timeout)
+
+    monkeypatch.setattr(media_players, "run_command", timeout_once)
+    monkeypatch.setattr(media_players.time, "sleep", lambda _seconds: None)
+
+    result = backend.wait_for_status("vlc", "Playing", timeout=2.0, target=TARGET)
+
+    assert did_timeout is True
+    assert calls.count(("--list-all",)) == 1
+    assert result["playback_status"] == "Playing"
+
+
 def test_mpris_wait_timeout_includes_last_observed_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

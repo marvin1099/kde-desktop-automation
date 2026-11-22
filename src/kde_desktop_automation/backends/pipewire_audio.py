@@ -226,39 +226,46 @@ class PipeWireAudioBackend:
                 details=details,
             ) from query_error
 
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise_timeout(None)
-        try:
-            server_info = self._require_pipewire(
-                timeout=min(_AUDIO_COMMAND_TIMEOUT_SECONDS, remaining / 3)
-            )
-        except InteractionError as exc:
-            if exc.code == "backend_timeout":
-                raise_timeout(None, query_error=exc)
-            raise
-
-        default_name = server_info["default_sink" if direction == "sink" else "default_source"]
         last_observation: dict[str, Any] | None = None
+        last_query_error: InteractionError | None = None
+        server_info: dict[str, str | None] | None = None
+        default_name: str | None = None
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise_timeout(last_observation)
+                raise_timeout(last_observation, query_error=last_query_error)
             try:
+                if server_info is None:
+                    server_info = self._require_pipewire(
+                        timeout=min(_AUDIO_COMMAND_TIMEOUT_SECONDS, remaining / 3)
+                    )
+                    default_name = server_info[
+                        "default_sink" if direction == "sink" else "default_source"
+                    ]
+                    last_query_error = None
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise_timeout(last_observation)
                 records = self._json_list(
                     "sinks" if direction == "sink" else "sources",
                     timeout=min(_AUDIO_COMMAND_TIMEOUT_SECONDS, remaining),
                 )
             except InteractionError as exc:
-                if exc.code == "backend_timeout":
-                    raise_timeout(last_observation, query_error=exc)
-                raise
+                if exc.code != "backend_timeout":
+                    raise
+                last_query_error = exc
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise_timeout(last_observation, query_error=last_query_error)
+                time.sleep(min(_AUDIO_POLL_INTERVAL_SECONDS, remaining))
+                continue
             devices = self._normalize_devices(records, direction, default_name)
             device = self._resolve_device(
                 {"devices": {direction + "s": devices}},
                 direction,
                 device_name,
             )
+            last_query_error = None
             last_observation = {
                 "device": device,
                 "observed_at": datetime.now(UTC).isoformat(),
@@ -276,7 +283,7 @@ class PipeWireAudioBackend:
                 }
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise_timeout(last_observation)
+                raise_timeout(last_observation, query_error=last_query_error)
             time.sleep(min(_AUDIO_POLL_INTERVAL_SECONDS, remaining))
 
     def route_stream(
