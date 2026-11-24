@@ -18,6 +18,11 @@ from kde_desktop_automation.backends.kwin_input import (
     MAX_DRAG_PAUSE_MS,
     MAX_DRAG_STEPS,
 )
+from kde_desktop_automation.backends.power_inhibitors import (
+    DEFAULT_POWER_INHIBITOR_SECONDS,
+    MAX_POWER_INHIBITOR_SECONDS,
+    PowerInhibitor,
+)
 from kde_desktop_automation.backends.user_desktop import UserDesktopBackend
 from kde_desktop_automation.diagnostics import build_doctor_report
 from kde_desktop_automation.errors import InteractionError
@@ -86,6 +91,13 @@ audio_app = typer.Typer(
     ),
     no_args_is_help=True,
 )
+power_app = typer.Typer(
+    help=(
+        "Temporarily inhibit selected live-desktop power actions. "
+        "Choose user-desktop explicitly with --session."
+    ),
+    no_args_is_help=True,
+)
 app.add_typer(user_desktop_app, name="user-desktop")
 user_desktop_app.add_typer(user_window_app, name="window")
 user_desktop_app.add_typer(user_input_app, name="input")
@@ -95,6 +107,7 @@ app.add_typer(pointer_app, name="pointer")
 app.add_typer(display_app, name="display")
 app.add_typer(media_app, name="media")
 app.add_typer(audio_app, name="audio")
+app.add_typer(power_app, name="power")
 
 console = Console()
 MediaControlAction = Literal["play", "pause", "play-pause", "stop", "next", "previous", "seek"]
@@ -114,7 +127,7 @@ def configure_target(
         help=(
             "Before the command group, target a private session ID or explicitly "
             "'user-desktop'; overrides KDE_DESKTOP_SESSION and the private default. "
-            "Audio commands require user-desktop."
+            "Audio and power commands require user-desktop."
         ),
     ),
 ) -> None:
@@ -971,6 +984,69 @@ def route_audio_stream(
             ),
             [],
         ),
+        json_output=json_output,
+    )
+
+
+@power_app.command("inhibit")
+def inhibit_power_action(
+    ctx: Context,
+    inhibitor: PowerInhibitor = typer.Argument(
+        ...,
+        help=(
+            "Action to inhibit: screen-lock, power-management, sleep, idle, shutdown, "
+            "handle-power-key, handle-suspend-key, handle-hibernate-key, or handle-lid-switch."
+        ),
+    ),
+    duration_seconds: int = typer.Option(
+        DEFAULT_POWER_INHIBITOR_SECONDS,
+        "--duration",
+        min=-1,
+        max=MAX_POWER_INHIBITOR_SECONDS,
+        help="Duration in seconds (1–86400); use -1 for indefinite until explicitly released.",
+    ),
+    reason: str | None = typer.Option(
+        None,
+        "--reason",
+        help="Short reason shown with the active inhibitor.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Temporarily inhibit one typed power action on the explicitly selected live desktop."""
+    _run(
+        lambda: (
+            _operations(ctx).power_inhibit(
+                inhibitor,
+                duration_seconds=duration_seconds,
+                reason=reason,
+            ),
+            [],
+        ),
+        json_output=json_output,
+    )
+
+
+@power_app.command("list")
+def list_power_inhibitors(
+    ctx: Context,
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """List active inhibitors started by this application on the live desktop."""
+    _run(lambda: (_operations(ctx).power_list_inhibitors(), []), json_output=json_output)
+
+
+@power_app.command("release")
+def release_power_inhibitor(
+    ctx: Context,
+    inhibitor_id: str = typer.Argument(
+        ...,
+        help="32-character inhibitor ID returned by power inhibit.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Release one inhibitor previously started by this application."""
+    _run(
+        lambda: (_operations(ctx).power_release_inhibitor(inhibitor_id), []),
         json_output=json_output,
     )
 

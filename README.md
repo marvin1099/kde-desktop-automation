@@ -21,6 +21,8 @@ be selected explicitly.
   keyboard/text input and coordinate clicks/drags.
 - Inspect and control MPRIS media players.
 - Inspect and change live PipeWire audio settings (live desktop only).
+- Temporarily inhibit sleep, KDE screen locking, and other available power
+  actions on the live desktop, with timed or explicit release.
 - Expose the same target-aware operations through an stdio MCP server.
 
 Capabilities vary by target and installed tools. There is no accessibility tree,
@@ -102,6 +104,8 @@ ID or `user-desktop` when intentionally using the live desktop.
   tool reads back and reports the effective geometry.
 - Audio controls are live-desktop-only. Private sessions do not provide an
   isolated audio server.
+- Power inhibitors affect the real host; indefinite inhibitors remain active
+  until explicitly released with their returned ID.
 
 ## Guides
 

@@ -258,6 +258,35 @@ class FakeOperations:
             "process_id": process_id,
         }
 
+    def power_inhibit(
+        self,
+        inhibitor: str,
+        *,
+        duration_seconds: int,
+        reason: str | None,
+    ) -> dict[str, Any]:
+        return {
+            "target": {"kind": self.session},
+            "id": "a" * 32,
+            "inhibitor": inhibitor,
+            "duration_seconds": duration_seconds,
+            "reason": reason,
+        }
+
+    def power_list_inhibitors(self) -> dict[str, Any]:
+        return {
+            "target": {"kind": self.session},
+            "count": 1,
+            "inhibitors": [{"id": "a" * 32}],
+        }
+
+    def power_release_inhibitor(self, inhibitor_id: str) -> dict[str, Any]:
+        return {
+            "target": {"kind": self.session},
+            "id": inhibitor_id,
+            "released": True,
+        }
+
     def screenshot(self, output: Path, *, overwrite: bool = False) -> dict[str, Any]:
         del overwrite
         output.write_bytes(self.screenshot_png)
@@ -329,6 +358,9 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         "kde_audio_set_mute",
         "kde_audio_wait_for_mute",
         "kde_audio_route_stream",
+        "kde_power_inhibit",
+        "kde_power_list_inhibitors",
+        "kde_power_release_inhibitor",
         "kde_screenshot",
         "kde_screenshot_window",
         "kde_desktop_observe",
@@ -374,6 +406,9 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         "kde_audio_set_mute",
         "kde_audio_wait_for_mute",
         "kde_audio_route_stream",
+        "kde_power_inhibit",
+        "kde_power_list_inhibitors",
+        "kde_power_release_inhibitor",
         "kde_screenshot",
         "kde_screenshot_window",
         "kde_desktop_observe",
@@ -421,6 +456,33 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         audio_mute_tool.inputSchema["properties"]
     )
     assert audio_mute_tool.inputSchema["properties"]["direction"]["enum"] == ["sink", "source"]
+    power_inhibit_tool = next(tool for tool in tools if tool.name == "kde_power_inhibit")
+    assert {"session", "inhibitor", "duration_seconds"} <= set(
+        power_inhibit_tool.inputSchema["properties"]
+    )
+    assert power_inhibit_tool.inputSchema["properties"]["session"]["const"] == "user-desktop"
+    assert power_inhibit_tool.inputSchema["properties"]["duration_seconds"]["minimum"] == -1
+    assert power_inhibit_tool.inputSchema["properties"]["duration_seconds"]["maximum"] == 86_400
+    assert power_inhibit_tool.inputSchema["properties"]["duration_seconds"]["anyOf"] == [
+        {"const": -1},
+        {"minimum": 1, "maximum": 86_400},
+    ]
+    assert power_inhibit_tool.inputSchema["properties"]["inhibitor"]["enum"] == [
+        "screen-lock",
+        "power-management",
+        "sleep",
+        "idle",
+        "shutdown",
+        "handle-power-key",
+        "handle-suspend-key",
+        "handle-hibernate-key",
+        "handle-lid-switch",
+    ]
+    power_release_tool = next(tool for tool in tools if tool.name == "kde_power_release_inhibitor")
+    assert power_release_tool.inputSchema["properties"]["session"]["const"] == "user-desktop"
+    assert power_release_tool.inputSchema["properties"]["inhibitor_id"]["pattern"] == (
+        r"^[0-9a-f]{32}$"
+    )
     audio_wait_tool = next(tool for tool in tools if tool.name == "kde_audio_wait_for_mute")
     assert audio_wait_tool.inputSchema["properties"]["timeout"]["minimum"] == 0.1
     assert audio_wait_tool.inputSchema["properties"]["timeout"]["maximum"] == 60.0
@@ -873,6 +935,53 @@ def test_mcp_audio_routing_requires_and_uses_explicit_live_target() -> None:
         "process_id": 555,
     }
     assert FakeOperations.selected_sessions == ["user-desktop"]
+
+
+def test_mcp_power_inhibitors_require_and_use_explicit_live_target() -> None:
+    server = _server()
+
+    async def invoke_all() -> tuple[CallToolResult, CallToolResult, CallToolResult]:
+        started = cast(
+            CallToolResult,
+            await server.call_tool(
+                "kde_power_inhibit",
+                {
+                    "session": "user-desktop",
+                    "inhibitor": "screen-lock",
+                    "duration_seconds": -1,
+                    "reason": "presentation",
+                },
+            ),
+        )
+        listed = cast(
+            CallToolResult,
+            await server.call_tool(
+                "kde_power_list_inhibitors",
+                {"session": "user-desktop"},
+            ),
+        )
+        released = cast(
+            CallToolResult,
+            await server.call_tool(
+                "kde_power_release_inhibitor",
+                {"session": "user-desktop", "inhibitor_id": "a" * 32},
+            ),
+        )
+        return started, listed, released
+
+    started, listed, released = asyncio.run(invoke_all())
+
+    assert started.isError is False
+    assert started.structuredContent["data"] == {
+        "target": {"kind": "user-desktop"},
+        "id": "a" * 32,
+        "inhibitor": "screen-lock",
+        "duration_seconds": -1,
+        "reason": "presentation",
+    }
+    assert listed.structuredContent["data"]["count"] == 1
+    assert released.structuredContent["data"]["released"] is True
+    assert FakeOperations.selected_sessions == ["user-desktop"] * 3
 
 
 def test_mcp_audio_mute_wait_is_read_only_and_requires_live_target() -> None:

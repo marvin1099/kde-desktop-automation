@@ -422,11 +422,46 @@ operation never moves all streams based only on a broad app-name match. Audio
 listing can reveal active application names, and mute/volume/default/routing
 changes affect the user's real devices.
 
+#### Temporary power inhibitors
+
+Power inhibitors are **live-desktop only** and do not edit saved KDE power
+profiles. Select one typed action; each inhibitor gets its own ID, so listing or
+releasing these inhibitors does not affect inhibitors created by KDE or other
+applications:
+
+```bash
+# Prevent suspend/hibernate for 30 minutes.
+kde-desktop --session user-desktop power inhibit sleep --duration 1800 \
+  --reason "Long-running render" --json
+
+# Prevent KDE's screen saver/automatic lock while a presentation is running.
+kde-desktop --session user-desktop power inhibit screen-lock --duration 3600 \
+  --reason "Presentation" --json
+
+# Keep an inhibitor until explicitly released. Save the returned .data.id.
+kde-desktop --session user-desktop power inhibit sleep --duration -1 --json
+kde-desktop --session user-desktop power list --json
+kde-desktop --session user-desktop power release INHIBITOR_ID --json
+```
+
+`power inhibit` accepts `screen-lock`, `power-management`, `sleep`, `idle`,
+`shutdown`, `handle-power-key`, `handle-suspend-key`, `handle-hibernate-key`,
+and `handle-lid-switch`. `screen-lock` uses KDE's
+`org.freedesktop.ScreenSaver` interface; `power-management` uses KDE's
+`org.freedesktop.PowerManagement.Inhibit` interface. The remaining choices use
+`systemd-inhibit`; in particular, `idle` blocks systemd idle actions but is
+not a substitute for `screen-lock`.
+Finite durations are 1–86400 seconds (default 300); `-1` means indefinite.
+Finite inhibitors release themselves when their timer expires. For indefinite
+inhibitors, call `power release` with the returned ID when done. `power list`
+shows only this application's tracked inhibitors.
+
 ### MCP server
 
 The stdio MCP server exposes the same observation, window, pointer/input,
-display, MPRIS media, PipeWire audio, screenshot, and capability operations,
-plus private-session lifecycle tools. `kde_desktop_observe` returns a structured
+display, MPRIS media, PipeWire audio, screenshot, temporary power-inhibitor,
+and capability operations, plus private-session lifecycle tools.
+`kde_desktop_observe` returns a structured
 snapshot and screenshot image content when the authorized Screenshot2 helper is available;
 `kde_pointer_position` reads the pointer;
 `kde_window_set_geometry` sets and verifies a KWin frame rectangle.
@@ -459,6 +494,13 @@ and `KDE_DESKTOP_SESSION` do not select MCP targets; `kde_session_use` changes a
 persisted CLI default only. This explicit per-call selector prevents accidental
 cross-session use but is not an authorization boundary. Existing MCP callers
 that omitted `session` must be updated; CLI default-session behavior is unchanged.
+
+The `kde_power_inhibit`, `kde_power_list_inhibitors`, and
+`kde_power_release_inhibitor` tools mirror the CLI power commands. They require
+`session="user-desktop"`; `kde_power_inhibit` accepts one of the typed inhibitor
+choices, `duration_seconds` (1–86400 or `-1` for indefinite), and an optional
+reason. Use the returned ID with the release tool when an indefinite inhibitor
+is no longer needed.
 
 `kde_screenshot` captures the full selected desktop. `kde_screenshot_window`
 uses KWin Screenshot2 to capture the exact selected UUID (not a crop) without

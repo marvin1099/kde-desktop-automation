@@ -35,6 +35,7 @@ class RuntimePaths:
     state_root: Path
     sessions_root: Path
     homes_root: Path
+    power_inhibitors_root: Path
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str] | None = None) -> RuntimePaths:
@@ -92,9 +93,17 @@ class RuntimePaths:
         app_runtime = runtime_dir / "kde-desktop-automation"
         app_state = state_home / "kde-desktop-automation"
         runtime_sessions = app_runtime / "sessions"
+        power_inhibitors = app_runtime / "power-inhibitors"
         state_sessions = app_state / "sessions"
         homes = app_state / "homes"
-        for directory in (app_runtime, runtime_sessions, app_state, state_sessions, homes):
+        for directory in (
+            app_runtime,
+            runtime_sessions,
+            power_inhibitors,
+            app_state,
+            state_sessions,
+            homes,
+        ):
             _ensure_private_directory(directory)
 
         return cls(
@@ -102,6 +111,7 @@ class RuntimePaths:
             state_root=app_state,
             sessions_root=state_sessions,
             homes_root=homes,
+            power_inhibitors_root=power_inhibitors,
         )
 
     def for_session(self, session_id: str, *, create: bool = False) -> SessionPaths:

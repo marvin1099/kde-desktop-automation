@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from math import isfinite
 from pathlib import Path
@@ -16,6 +16,11 @@ from kde_desktop_automation.backends.kwin_input import (
 )
 from kde_desktop_automation.backends.media_players import MprisBackend
 from kde_desktop_automation.backends.pipewire_audio import PipeWireAudioBackend
+from kde_desktop_automation.backends.power_inhibitors import (
+    DEFAULT_POWER_INHIBITOR_SECONDS,
+    PowerInhibitorManager,
+    power_inhibitor_capabilities,
+)
 from kde_desktop_automation.backends.user_desktop import UserDesktopBackend
 from kde_desktop_automation.errors import InteractionError
 from kde_desktop_automation.paths import RuntimePaths
@@ -37,7 +42,11 @@ class DesktopOperations:
         manager_factory: Callable[[], SessionManager] | None = None,
         user_desktop: UserDesktopBackend | None = None,
         user_desktop_factory: Callable[[], UserDesktopBackend] | None = None,
+        power_inhibitor_factory: (
+            Callable[[Path, Mapping[str, str]], PowerInhibitorManager] | None
+        ) = None,
     ) -> None:
+        self._power_inhibitor_factory = power_inhibitor_factory or PowerInhibitorManager
         self._session_id: str | None
         self._manager: SessionManager | None
         self._user_desktop: UserDesktopBackend | None
@@ -515,8 +524,10 @@ class DesktopOperations:
         }
 
     def capabilities(self) -> dict[str, Any]:
-        capabilities = _media_capabilities() | _audio_capabilities(
-            live_target=self._user_desktop is not None
+        capabilities = (
+            _media_capabilities()
+            | _audio_capabilities(live_target=self._user_desktop is not None)
+            | power_inhibitor_capabilities(live_target=self._user_desktop is not None)
         )
         if self._user_desktop is not None:
             result = self._user_desktop.capabilities()
@@ -703,6 +714,32 @@ class DesktopOperations:
             target=self._target(),
         )
 
+    def power_inhibit(
+        self,
+        inhibitor: str,
+        *,
+        duration_seconds: int = DEFAULT_POWER_INHIBITOR_SECONDS,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        result = self._power_inhibitor_backend().inhibit(
+            inhibitor,
+            duration_seconds=duration_seconds,
+            reason=reason,
+        )
+        return result | {"target": self._target()}
+
+    def power_list_inhibitors(self) -> dict[str, Any]:
+        inhibitors = self._power_inhibitor_backend().list()
+        return {
+            "target": self._target(),
+            "count": len(inhibitors),
+            "inhibitors": inhibitors,
+        }
+
+    def power_release_inhibitor(self, inhibitor_id: str) -> dict[str, Any]:
+        result = self._power_inhibitor_backend().release(inhibitor_id)
+        return result | {"target": self._target()}
+
     def _private_manager(self) -> SessionManager:
         if self._manager is None:
             raise InteractionError("invalid_target", "No private session manager is selected.")
@@ -729,6 +766,20 @@ class DesktopOperations:
                 details={"selected_session": self._session_id},
             )
         return PipeWireAudioBackend(self._user_desktop.environ)
+
+    def _power_inhibitor_backend(self) -> PowerInhibitorManager:
+        if self._user_desktop is None:
+            raise InteractionError(
+                "power_inhibitors_require_live_target",
+                "Power inhibitors affect the current host and are live-desktop only; "
+                "explicitly select --session user-desktop.",
+                details={"selected_session": self._session_id},
+            )
+        paths = RuntimePaths.from_environment(self._user_desktop.environ)
+        return self._power_inhibitor_factory(
+            paths.power_inhibitors_root,
+            self._user_desktop.environ,
+        )
 
     def _target(self) -> dict[str, str]:
         if self._user_desktop is not None:

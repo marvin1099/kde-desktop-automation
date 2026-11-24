@@ -18,7 +18,10 @@ def test_runtime_paths_create_private_directories(tmp_path) -> None:
     session = paths.for_session(session_id, create=True)
 
     assert paths.runtime_root == runtime / "kde-desktop-automation"
+    assert paths.power_inhibitors_root == paths.runtime_root / "power-inhibitors"
     assert paths.state_root == tmp_path / "state" / "kde-desktop-automation"
+    assert paths.power_inhibitors_root.is_dir()
+    assert stat.S_IMODE(paths.power_inhibitors_root.stat().st_mode) == 0o700
     assert session.runtime_dir.is_dir()
     assert session.home_dir.is_dir()
     assert stat.S_IMODE(session.runtime_dir.stat().st_mode) == 0o700

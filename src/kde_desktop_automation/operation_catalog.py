@@ -72,6 +72,17 @@ SHARED_OPERATION_CATALOG = (
         "kde_audio_wait_for_mute",
     ),
     OperationSurface("audio_route_stream", ("audio", "route-stream"), "kde_audio_route_stream"),
+    OperationSurface("power_inhibit", ("power", "inhibit"), "kde_power_inhibit"),
+    OperationSurface(
+        "power_list_inhibitors",
+        ("power", "list"),
+        "kde_power_list_inhibitors",
+    ),
+    OperationSurface(
+        "power_release_inhibitor",
+        ("power", "release"),
+        "kde_power_release_inhibitor",
+    ),
     OperationSurface("screenshot", ("screenshot",), "kde_screenshot"),
     OperationSurface("capabilities", ("capabilities",), "kde_capabilities"),
 )
@@ -87,6 +98,7 @@ SHARED_CLI_ROOTS = frozenset(
         "display",
         "media",
         "audio",
+        "power",
     }
 )
 

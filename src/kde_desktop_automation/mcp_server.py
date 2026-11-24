@@ -21,6 +21,11 @@ from kde_desktop_automation.backends.kwin_input import (
     MAX_DRAG_PAUSE_MS,
     MAX_DRAG_STEPS,
 )
+from kde_desktop_automation.backends.power_inhibitors import (
+    DEFAULT_POWER_INHIBITOR_SECONDS,
+    MAX_POWER_INHIBITOR_SECONDS,
+    PowerInhibitor,
+)
 from kde_desktop_automation.errors import InteractionError
 from kde_desktop_automation.operations import DesktopOperations
 from kde_desktop_automation.paths import RuntimePaths
@@ -78,6 +83,12 @@ PipeWire audio tools are live-user-desktop only. They require
 `session='user-desktop'`, may reveal active application audio streams, and can
 change device routing, volume, or microphone mute state. Confirm device and
 application selectors with `kde_audio_list` first.
+
+Power inhibitors are also live-user-desktop only. Select one typed inhibitor,
+use `duration_seconds=-1` only when it should remain until explicitly released,
+and release it with the returned ID when finished. Inhibitors started by this
+server are tracked separately; releasing one never touches other applications'
+systemd or KDE inhibitors.
 """
 
 OperationsFactory = Callable[[str], DesktopOperations]
@@ -114,6 +125,15 @@ WindowId = Annotated[
     ),
 ]
 Selector = Annotated[str, Field(min_length=1, max_length=512)]
+PowerInhibitorId = Annotated[
+    str,
+    Field(
+        min_length=32,
+        max_length=32,
+        pattern=r"^[0-9a-f]{32}$",
+        description="32-character ID returned by kde_power_inhibit.",
+    ),
+]
 ExpectedAppId = Annotated[
     str,
     Field(
@@ -902,6 +922,80 @@ def create_mcp_server(
                 application_name=application_name,
                 process_id=process_id,
             )
+        )
+
+    @server.tool(
+        name="kde_power_inhibit",
+        description=(
+            "Temporarily inhibit one typed power-management action on the live desktop. "
+            "Requires session='user-desktop'. Duration is seconds; -1 means indefinite and "
+            "must later be released with kde_power_release_inhibitor. Finite duration is "
+            "limited to 86400 seconds."
+        ),
+        annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True),
+        structured_output=False,
+    )
+    async def power_inhibit(
+        session: LiveDesktopTarget,
+        inhibitor: PowerInhibitor,
+        duration_seconds: Annotated[
+            int,
+            Field(
+                strict=True,
+                ge=-1,
+                le=MAX_POWER_INHIBITOR_SECONDS,
+                json_schema_extra={
+                    "anyOf": [
+                        {"const": -1},
+                        {"minimum": 1, "maximum": MAX_POWER_INHIBITOR_SECONDS},
+                    ]
+                },
+                description="Duration in seconds, 1–86400; use -1 for indefinite.",
+            ),
+        ] = DEFAULT_POWER_INHIBITOR_SECONDS,
+        reason: Annotated[
+            str | None,
+            Field(min_length=1, max_length=512),
+        ] = None,
+    ) -> CallToolResult:
+        """Start a temporary inhibitor; indefinite inhibitors require explicit release."""
+        return await _invoke_in_worker(
+            lambda: desktop_operations(session).power_inhibit(
+                inhibitor,
+                duration_seconds=duration_seconds,
+                reason=reason,
+            )
+        )
+
+    @server.tool(
+        name="kde_power_list_inhibitors",
+        description=(
+            "List active temporary power inhibitors started through this application. "
+            "Requires session='user-desktop'."
+        ),
+        annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+        structured_output=False,
+    )
+    async def power_list_inhibitors(session: LiveDesktopTarget) -> CallToolResult:
+        """List tracked inhibitors on the live desktop."""
+        return await _invoke_in_worker(lambda: desktop_operations(session).power_list_inhibitors())
+
+    @server.tool(
+        name="kde_power_release_inhibitor",
+        description=(
+            "Release one inhibitor previously started through this application. "
+            "Requires session='user-desktop' and the returned inhibitor ID."
+        ),
+        annotations=ToolAnnotations(destructiveHint=True, openWorldHint=True),
+        structured_output=False,
+    )
+    async def power_release_inhibitor(
+        session: LiveDesktopTarget,
+        inhibitor_id: PowerInhibitorId,
+    ) -> CallToolResult:
+        """Stop only the selected inhibitor process started by this application."""
+        return await _invoke_in_worker(
+            lambda: desktop_operations(session).power_release_inhibitor(inhibitor_id)
         )
 
     @server.tool(

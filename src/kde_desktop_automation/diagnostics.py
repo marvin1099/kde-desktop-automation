@@ -21,6 +21,7 @@ _TOOLS = (
     "playerctl",
     "wpctl",
     "pactl",
+    "systemd-inhibit",
 )
 
 

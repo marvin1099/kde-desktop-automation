@@ -27,6 +27,7 @@ def test_doctor_json_requires_explicit_user_desktop_commands() -> None:
     assert "playerctl" in report["data"]["tools"]
     assert "wpctl" in report["data"]["tools"]
     assert "pactl" in report["data"]["tools"]
+    assert "systemd-inhibit" in report["data"]["tools"]
 
 
 def test_doctor_reports_screenshot_helper_registration_readiness(monkeypatch) -> None:
@@ -534,6 +535,62 @@ def test_audio_mute_wait_and_route_cli_use_explicit_selectors(monkeypatch) -> No
         ("user-desktop", "wait-mute", "source", "usb_mic", False, 3.0),
         ("user-desktop", "route", 17, "headphones", "Firefox", 555),
     ]
+
+
+def test_power_inhibitor_cli_uses_explicit_live_target_and_release_id(monkeypatch) -> None:
+    calls = []
+
+    class FakeOperations:
+        def __init__(self, session, **_kwargs):
+            self.session = session
+
+        def power_inhibit(self, inhibitor, *, duration_seconds, reason):
+            calls.append((self.session, "inhibit", inhibitor, duration_seconds, reason))
+            return {"id": "a" * 32, "inhibitor": inhibitor}
+
+        def power_list_inhibitors(self):
+            calls.append((self.session, "list"))
+            return {"count": 1, "inhibitors": [{"id": "a" * 32}]}
+
+        def power_release_inhibitor(self, inhibitor_id):
+            calls.append((self.session, "release", inhibitor_id))
+            return {"id": inhibitor_id, "released": True}
+
+    monkeypatch.setattr("kde_desktop_automation.cli.DesktopOperations", FakeOperations)
+    runner = CliRunner()
+    started = runner.invoke(
+        app,
+        [
+            "--session",
+            "user-desktop",
+            "power",
+            "inhibit",
+            "screen-lock",
+            "--duration",
+            "-1",
+            "--reason",
+            "presentation",
+            "--json",
+        ],
+    )
+    listed = runner.invoke(
+        app,
+        ["--session", "user-desktop", "power", "list", "--json"],
+    )
+    released = runner.invoke(
+        app,
+        ["--session", "user-desktop", "power", "release", "a" * 32, "--json"],
+    )
+
+    assert started.exit_code == 0, started.stdout + started.stderr
+    assert listed.exit_code == 0, listed.stdout + listed.stderr
+    assert released.exit_code == 0, released.stdout + released.stderr
+    assert calls == [
+        ("user-desktop", "inhibit", "screen-lock", -1, "presentation"),
+        ("user-desktop", "list"),
+        ("user-desktop", "release", "a" * 32),
+    ]
+    assert json.loads(started.stdout)["data"]["id"] == "a" * 32
 
 
 def test_session_list_json_is_empty_without_starting_a_session(tmp_path, monkeypatch) -> None:

@@ -531,3 +531,86 @@ def test_private_capabilities_do_not_advertise_live_pipewire_controls() -> None:
     assert result["capabilities"]["audio.devices"] is False
     assert result["capabilities"]["audio.route_stream"] is False
     assert result["capabilities"]["audio.wait_for_mute"] is False
+    assert result["capabilities"]["power.inhibit"] is False
+    assert result["capabilities"]["power.screen_lock_inhibit"] is False
+    assert result["capabilities"]["power.kde_power_management_inhibit"] is False
+
+
+def test_power_inhibitors_reject_private_session_targets() -> None:
+    operations = DesktopOperations(
+        "agent-123456789abc",
+        manager=FakeManager(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(InteractionError) as error:
+        operations.power_inhibit("sleep", duration_seconds=60)
+
+    assert error.value.code == "power_inhibitors_require_live_target"
+
+
+def test_power_inhibitor_operations_route_only_to_explicit_live_desktop(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    runtime.chmod(0o700)
+    environ = {
+        "XDG_RUNTIME_DIR": str(runtime),
+        "XDG_STATE_HOME": str(tmp_path / "state"),
+        "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/mock-session-bus",
+    }
+    live_desktop = FakeUserDesktop()
+    live_desktop.environ = environ
+    calls: list[tuple[Any, ...]] = []
+
+    class FakePowerInhibitors:
+        def __init__(self, root: Path, selected_environment: dict[str, str]) -> None:
+            calls.append(("init", root, selected_environment))
+
+        def inhibit(self, inhibitor, *, duration_seconds, reason):
+            calls.append(("inhibit", inhibitor, duration_seconds, reason))
+            return {"id": "a" * 32, "inhibitor": inhibitor}
+
+        def list(self):
+            calls.append(("list",))
+            return [{"id": "a" * 32}]
+
+        def release(self, inhibitor_id):
+            calls.append(("release", inhibitor_id))
+            return {"id": inhibitor_id, "released": True}
+
+    operations = DesktopOperations(
+        "user-desktop",
+        user_desktop=live_desktop,  # type: ignore[arg-type]
+        power_inhibitor_factory=FakePowerInhibitors,  # type: ignore[arg-type]
+    )
+
+    started = operations.power_inhibit(
+        "sleep",
+        duration_seconds=-1,
+        reason="long render",
+    )
+    listed = operations.power_list_inhibitors()
+    released = operations.power_release_inhibitor("a" * 32)
+
+    assert started["target"] == {"kind": "user-desktop"}
+    assert listed["count"] == 1
+    assert released["released"] is True
+    assert calls == [
+        (
+            "init",
+            runtime / "kde-desktop-automation" / "power-inhibitors",
+            environ,
+        ),
+        ("inhibit", "sleep", -1, "long render"),
+        (
+            "init",
+            runtime / "kde-desktop-automation" / "power-inhibitors",
+            environ,
+        ),
+        ("list",),
+        (
+            "init",
+            runtime / "kde-desktop-automation" / "power-inhibitors",
+            environ,
+        ),
+        ("release", "a" * 32),
+    ]
