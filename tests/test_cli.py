@@ -87,6 +87,50 @@ def test_media_control_cli_passes_explicit_player_action_and_seek_offset(monkeyp
     assert json.loads(result.stdout)["data"]["seconds"] == -15.0
 
 
+def test_session_create_and_extend_accept_lease_duration(monkeypatch) -> None:
+    calls = []
+
+    class FakeManager:
+        def create_agent_session(
+            self,
+            name,
+            width,
+            height,
+            *,
+            make_default=False,
+            duration_seconds,
+        ):
+            calls.append(("create", name, width, height, make_default, duration_seconds))
+            return {"session_id": "agent-123456789abc"}
+
+        def public_record(self, record):
+            return record
+
+        def extend_session(self, session_id, *, duration_seconds):
+            calls.append(("extend", session_id, duration_seconds))
+            return {"session_id": session_id, "expires_at": None}
+
+    monkeypatch.setattr("kde_desktop_automation.cli._manager", FakeManager)
+    runner = CliRunner()
+
+    created = runner.invoke(
+        app,
+        ["session", "create", "--duration", "-1", "--json"],
+    )
+    extended = runner.invoke(
+        app,
+        ["session", "extend", "agent-123456789abc", "--duration", "3600", "--json"],
+    )
+
+    assert created.exit_code == 0
+    assert extended.exit_code == 0
+    assert calls == [
+        ("create", "agent", 1280, 800, False, -1),
+        ("extend", "agent-123456789abc", 3600),
+    ]
+    assert json.loads(extended.stdout)["data"]["expires_at"] is None
+
+
 def test_media_seek_to_cli_passes_absolute_position_to_selected_target(monkeypatch) -> None:
     calls = []
 

@@ -29,7 +29,7 @@ from kde_desktop_automation.backends.power_inhibitors import (
 from kde_desktop_automation.errors import InteractionError
 from kde_desktop_automation.operations import DesktopOperations
 from kde_desktop_automation.paths import RuntimePaths
-from kde_desktop_automation.sessions import SessionManager
+from kde_desktop_automation.sessions import DEFAULT_SESSION_LEASE_SECONDS, SessionManager
 
 _LOGGER = logging.getLogger(__name__)
 _SERVER_INSTRUCTIONS = """\
@@ -79,6 +79,11 @@ selected session's MPRIS bus and can reveal its current media metadata; player
 names must be selected explicitly. Successful control and seek calls report
 request submission, not verified playback effect.
 
+Private sessions auto-stop after six hours by default. `kde_session_create`
+accepts `duration_seconds=-1` for an indefinite lease; use `kde_session_extend`
+to add time or switch to an indefinite lease, and `kde_session_stop` to close
+one immediately.
+
 PipeWire audio tools are live-user-desktop only. They require
 `session='user-desktop'`, may reveal active application audio streams, and can
 change device routing, volume, or microphone mute state. Confirm device and
@@ -114,6 +119,22 @@ PrivateSessionId = Annotated[
         description=(
             "Managed private session ID returned by kde_session_create or kde_session_list."
         ),
+    ),
+]
+SessionLeaseSeconds = Annotated[
+    int,
+    Field(
+        ge=-1,
+        description=(
+            "Lease duration in seconds; positive values are timed, -1 means indefinite. "
+            "Zero is invalid."
+        ),
+        json_schema_extra={
+            "anyOf": [
+                {"const": -1},
+                {"minimum": 1},
+            ]
+        },
     ),
 ]
 WindowId = Annotated[
@@ -246,8 +267,9 @@ def create_mcp_server(
         width: Annotated[int, Field(ge=320, le=7680)] = 1280,
         height: Annotated[int, Field(ge=240, le=4320)] = 800,
         make_default: bool = False,
+        duration_seconds: SessionLeaseSeconds = DEFAULT_SESSION_LEASE_SECONDS,
     ) -> CallToolResult:
-        """Create a private desktop. The first session becomes default unless one already exists."""
+        """Create a private desktop with a six-hour default lease; -1 means indefinite."""
 
         def create() -> dict[str, Any]:
             manager = manager_factory()
@@ -256,6 +278,7 @@ def create_mcp_server(
                 width,
                 height,
                 make_default=make_default,
+                duration_seconds=duration_seconds,
             )
             return manager.public_record(record)
 
@@ -299,6 +322,28 @@ def create_mcp_server(
     def session_stop(session_id: PrivateSessionId) -> CallToolResult:
         """Stop only the named private KWin session; its applications will be terminated."""
         return _invoke(lambda: _stop_private_session(manager_factory(), session_id))
+
+    @server.tool(
+        name="kde_session_extend",
+        description=(
+            "Extend a running private session lease. Positive seconds are added to its current "
+            "expiry; from an indefinite lease they start a finite lease from now. Use -1 for "
+            "indefinite, or kde_session_stop to close it immediately."
+        ),
+        annotations=ToolAnnotations(destructiveHint=False, openWorldHint=False),
+        structured_output=False,
+    )
+    def session_extend(
+        session_id: PrivateSessionId,
+        duration_seconds: SessionLeaseSeconds = DEFAULT_SESSION_LEASE_SECONDS,
+    ) -> CallToolResult:
+        """Extend a session by the requested seconds, or use -1 for an indefinite lease."""
+        return _invoke(
+            lambda: manager_factory().extend_session(
+                session_id,
+                duration_seconds=duration_seconds,
+            )
+        )
 
     @server.tool(
         name="kde_session_launch",

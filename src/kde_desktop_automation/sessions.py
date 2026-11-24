@@ -4,13 +4,17 @@ import fcntl
 import json
 import os
 import re
+import select
 import stat
+import subprocess
+import sys
 import tempfile
+import time
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -27,10 +31,17 @@ from kde_desktop_automation.backends.kwin_virtual import KWinVirtualBackend
 from kde_desktop_automation.errors import InteractionError
 from kde_desktop_automation.models import ProcessIdentity, SessionRecord
 from kde_desktop_automation.paths import RuntimePaths, validate_session_id
+from kde_desktop_automation.process import process_identity, process_matches, terminate_verified
 from kde_desktop_automation.window_selection import find_one_window
 
 _NAME = re.compile(r"^[\w .-]{1,64}$", flags=re.UNICODE)
 _MAX_OUTPUT_PIXELS = 16_777_216
+DEFAULT_SESSION_LEASE_SECONDS = 6 * 60 * 60
+_LEASE_WORKER_MODULE = "kde_desktop_automation.session_lease_worker"
+_LEASE_READY_TIMEOUT_SECONDS = 5.0
+_LEASE_WORKER_POLL_SECONDS = 30.0
+_PROCESS_MARKER_ENV = "KDE_DESKTOP_AUTOMATION_PROCESS_MARKER"
+_READY_FD_ENV = "KDE_DESKTOP_AUTOMATION_READY_FD"
 
 
 class SessionBackend(Protocol):
@@ -346,10 +357,18 @@ class SessionStore:
 
 
 class SessionManager:
-    def __init__(self, paths: RuntimePaths, backend: SessionBackend | None = None) -> None:
+    def __init__(
+        self,
+        paths: RuntimePaths,
+        backend: SessionBackend | None = None,
+        *,
+        lease_worker_starter: Callable[[str], ProcessIdentity | None] | None = None,
+    ) -> None:
         self.paths = paths
         self.backend = backend or KWinVirtualBackend(paths)
         self.store = SessionStore(paths)
+        self._lease_worker_starter = lease_worker_starter or self._start_lease_worker
+        self._lease_worker_processes: dict[str, subprocess.Popen[bytes]] = {}
 
     def create_agent_session(
         self,
@@ -358,11 +377,15 @@ class SessionManager:
         height: int,
         *,
         make_default: bool = False,
+        duration_seconds: int = DEFAULT_SESSION_LEASE_SECONDS,
     ) -> SessionRecord:
         _validate_request(name, width, height)
+        _validate_lease_duration(duration_seconds)
         name = name.strip()
         session_id = f"agent-{uuid.uuid4().hex[:12]}"
         record = self.backend.start(session_id, name, width, height)
+        expires_at = _lease_expiration(duration_seconds)
+        record = replace(record, expires_at=expires_at)
         try:
             self.store.save(record)
         except Exception:
@@ -394,10 +417,49 @@ class SessionManager:
                     "session_record_retained": True,
                 },
             ) from exc
+
+        if expires_at is not None:
+            worker_identity: ProcessIdentity | None = None
+            try:
+                # Keep the worker from observing an incomplete record between startup
+                # and persisting its verified process identity.
+                with self.store.lock(session_id):
+                    worker_identity = self._lease_worker_starter(session_id)
+                    record = replace(record, lease_worker=worker_identity)
+                    self.store.save(record)
+            except Exception as exc:
+                monitor_cleanup_warnings: list[str] = []
+                monitor_cleanup_error: str | None = None
+                if worker_identity is not None:
+                    monitor_cleanup_warnings.extend(self._stop_lease_worker(worker_identity))
+                try:
+                    monitor_cleanup_warnings.extend(self.backend.stop(record))
+                    stopped = replace(record, stopped_at=datetime.now(UTC).isoformat())
+                    self.store.save(stopped)
+                except Exception as cleanup_exc:
+                    monitor_cleanup_error = str(cleanup_exc)
+                raise InteractionError(
+                    "session_lease_monitor_start_failed",
+                    "The private session started, but its automatic-expiry monitor could not "
+                    "be started. Cleanup was attempted; inspect the session record "
+                    "before retrying.",
+                    details={
+                        "session_id": session_id,
+                        "monitor_error": str(exc),
+                        "cleanup_error": monitor_cleanup_error,
+                        "cleanup_warnings": monitor_cleanup_warnings,
+                        "session_record_retained": True,
+                    },
+                ) from exc
         return record
 
     def list_sessions(self) -> list[dict[str, Any]]:
-        return [self.public_record(record) for record in self.store.list()]
+        records: list[dict[str, Any]] = []
+        for record in self.store.list():
+            self._expire_session_if_due(record.session_id)
+            record = self._ensure_lease_worker(record.session_id)
+            records.append(self.public_record(record))
+        return records
 
     def default_session_id(self) -> str | None:
         return self.store.default_session_id()
@@ -408,7 +470,63 @@ class SessionManager:
         return self.get_session(session_id)
 
     def get_session(self, session_id: str) -> dict[str, Any]:
-        return self.public_record(self.store.load(session_id))
+        self._expire_session_if_due(session_id)
+        record = self._ensure_lease_worker(session_id)
+        return self.public_record(record)
+
+    def extend_session(
+        self,
+        session_id: str,
+        *,
+        duration_seconds: int = DEFAULT_SESSION_LEASE_SECONDS,
+    ) -> dict[str, Any]:
+        """Add time to a finite lease, or switch the session to an indefinite lease."""
+        _validate_lease_duration(duration_seconds)
+        expired_worker: ProcessIdentity | None = None
+        expired = False
+        with self.store.lock(session_id):
+            record = self.store.load(session_id)
+            if record.stopped_at is not None or not self.backend.is_running(record):
+                raise InteractionError(
+                    "session_not_running",
+                    "Only a running private session can have its lease extended.",
+                    details={"session_id": session_id},
+                )
+
+            now = datetime.now(UTC)
+            expiration = _parse_lease_expiration(record.expires_at)
+            if expiration is not None and expiration <= now:
+                self._stop_record_locked(record)
+                expired_worker = record.lease_worker
+                expired = True
+            else:
+                new_expiration = (
+                    None
+                    if duration_seconds == -1
+                    else _lease_expiration(
+                        duration_seconds,
+                        base=(expiration if expiration is not None else now),
+                    )
+                )
+                updated = replace(record, expires_at=new_expiration)
+                if new_expiration is None:
+                    expired_worker = record.lease_worker
+                    updated = replace(updated, lease_worker=None)
+                else:
+                    updated = self._ensure_lease_worker_locked(updated)
+                self.store.save(updated)
+                record = updated
+
+        if expired_worker is not None:
+            self._stop_lease_worker(expired_worker)
+        if expired:
+            raise InteractionError(
+                "session_lease_expired",
+                "The private session lease already expired and the session was stopped; "
+                "create a new session instead.",
+                details={"session_id": session_id},
+            )
+        return self.public_record(record)
 
     def runtime_environment(self, session_id: str) -> dict[str, str]:
         """Return the selected running session's isolated process environment."""
@@ -458,8 +576,9 @@ class SessionManager:
         }
 
     def launch_application(self, session_id: str, argv: tuple[str, ...]) -> dict[str, Any]:
+        self._expire_session_if_due(session_id)
         with self.store.lock(session_id):
-            record = self._require_running(session_id)
+            record = self._ensure_lease_worker_locked(self._require_running_record(session_id))
             process = self.backend.launch_application(record, argv)
             updated = replace(
                 record, application_processes=record.application_processes + (process,)
@@ -796,16 +915,13 @@ class SessionManager:
     def stop(self, session_id: str) -> tuple[dict[str, Any], list[str]]:
         with self.store.lock(session_id):
             record = self.store.load(session_id)
-            warnings = self.backend.stop(record)
-            if self.backend.is_running(record):
-                raise InteractionError(
-                    "session_stop_incomplete",
-                    "The private session still has a verified backend process running.",
-                    details={"session_id": session_id, "warnings": warnings},
-                )
-            stopped = replace(record, stopped_at=datetime.now(UTC).isoformat())
-            self.store.save(stopped)
-            return self.public_record(stopped), warnings
+            if record.stopped_at is None:
+                stopped, warnings = self._stop_record_locked(record)
+            else:
+                stopped, warnings = record, []
+        if record.lease_worker is not None:
+            warnings.extend(self._stop_lease_worker(record.lease_worker))
+        return self.public_record(stopped), warnings
 
     def public_record(self, record: SessionRecord) -> dict[str, Any]:
         if record.stopped_at is not None:
@@ -815,8 +931,180 @@ class SessionManager:
         else:
             status = "degraded"
         return record.public_dict(status=status) | {
-            "is_default": self.store.default_session_id() == record.session_id
+            "is_default": self.store.default_session_id() == record.session_id,
+            "lease_monitor_active": (
+                None
+                if record.expires_at is None
+                else self._lease_worker_is_active(record.lease_worker)
+            ),
         }
+
+    def run_session_lease_worker(self, session_id: str, worker_pid: int) -> None:
+        """Watch one session record and stop its backend when the current lease expires."""
+        while True:
+            try:
+                with self.store.lock(session_id):
+                    record = self.store.load(session_id)
+                    if (
+                        record.stopped_at is not None
+                        or record.lease_worker is None
+                        or record.lease_worker.pid != worker_pid
+                    ):
+                        return
+                    expiration = _parse_lease_expiration(record.expires_at)
+                    if expiration is not None:
+                        remaining = (expiration - datetime.now(UTC)).total_seconds()
+                        if remaining <= 0:
+                            self._stop_record_locked(record)
+                            return
+                    else:
+                        remaining = _LEASE_WORKER_POLL_SECONDS
+                time.sleep(min(_LEASE_WORKER_POLL_SECONDS, max(1.0, remaining)))
+            except InteractionError as exc:
+                if exc.code == "session_not_found":
+                    return
+                # A transient stop error should not disable the lease permanently.
+                time.sleep(_LEASE_WORKER_POLL_SECONDS)
+
+    def _expire_session_if_due(self, session_id: str) -> bool:
+        worker: ProcessIdentity | None = None
+        with self.store.lock(session_id):
+            record = self.store.load(session_id)
+            expiration = _parse_lease_expiration(record.expires_at)
+            if (
+                record.stopped_at is not None
+                or expiration is None
+                or expiration > datetime.now(UTC)
+            ):
+                return False
+            self._stop_record_locked(record)
+            worker = record.lease_worker
+        if worker is not None:
+            self._stop_lease_worker(worker)
+        return True
+
+    def _ensure_lease_worker(self, session_id: str) -> SessionRecord:
+        with self.store.lock(session_id):
+            record = self.store.load(session_id)
+            return self._ensure_lease_worker_locked(record)
+
+    def _ensure_lease_worker_locked(self, record: SessionRecord) -> SessionRecord:
+        if record.stopped_at is not None or record.expires_at is None:
+            return record
+        if self._lease_worker_is_active(record.lease_worker):
+            return record
+        identity = self._lease_worker_starter(record.session_id)
+        updated = replace(record, lease_worker=identity)
+        self.store.save(updated)
+        return updated
+
+    def _lease_worker_is_active(self, identity: ProcessIdentity | None) -> bool:
+        if identity is None:
+            return False
+        try:
+            return process_matches(identity)
+        except InteractionError:
+            return False
+
+    def _stop_lease_worker(self, identity: ProcessIdentity) -> list[str]:
+        if identity.pid == os.getpid() or not self._lease_worker_is_active(identity):
+            return []
+        try:
+            stopped = terminate_verified(identity)
+        except InteractionError as exc:
+            return [f"Could not stop the session lease monitor (PID {identity.pid}): {exc.message}"]
+        if not stopped:
+            return [f"The session lease monitor (PID {identity.pid}) did not stop."]
+        process = self._lease_worker_processes.pop(identity.marker, None)
+        if process is not None:
+            process.wait(timeout=1.0)
+        return []
+
+    def _start_lease_worker(self, session_id: str) -> ProcessIdentity:
+        validate_session_id(session_id)
+        marker = f"session-lease-{session_id}-{uuid.uuid4().hex}"
+        argv = (sys.executable, "-m", _LEASE_WORKER_MODULE, session_id)
+        read_fd, write_fd = os.pipe()
+        environment = os.environ | {
+            "XDG_RUNTIME_DIR": str(self.paths.runtime_root.parent),
+            "XDG_STATE_HOME": str(self.paths.state_root.parent),
+            _PROCESS_MARKER_ENV: marker,
+            _READY_FD_ENV: str(write_fd),
+        }
+        try:
+            process = subprocess.Popen(
+                argv,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                pass_fds=(write_fd,),
+                start_new_session=True,
+            )
+        except OSError as exc:
+            os.close(read_fd)
+            os.close(write_fd)
+            raise InteractionError(
+                "session_lease_monitor_start_failed",
+                "Could not start the private session lease monitor.",
+                details={"session_id": session_id, "reason": str(exc)},
+            ) from exc
+        os.close(write_fd)
+        try:
+            ready, _, _ = select.select([read_fd], [], [], _LEASE_READY_TIMEOUT_SECONDS)
+            line = os.read(read_fd, 128).decode("utf-8", errors="replace").strip() if ready else ""
+        finally:
+            os.close(read_fd)
+        if line.startswith("READY:"):
+            try:
+                ready_pid = int(line.removeprefix("READY:"))
+            except ValueError:
+                ready_pid = -1
+            if ready_pid == process.pid:
+                try:
+                    identity = process_identity(
+                        ready_pid,
+                        executable=sys.executable,
+                        marker=marker,
+                        command=argv,
+                    )
+                except InteractionError:
+                    identity = None
+                if identity is not None:
+                    self._lease_worker_processes[marker] = process
+                    return identity
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=1.0)
+        raise InteractionError(
+            "session_lease_monitor_start_failed",
+            "The private session lease monitor did not become ready.",
+            details={
+                "session_id": session_id,
+                "startup_timeout_seconds": _LEASE_READY_TIMEOUT_SECONDS,
+                "reason": line or "worker exited without a readiness response",
+            },
+        )
+
+    def _stop_record_locked(
+        self,
+        record: SessionRecord,
+    ) -> tuple[SessionRecord, list[str]]:
+        warnings = self.backend.stop(record)
+        if self.backend.is_running(record):
+            raise InteractionError(
+                "session_stop_incomplete",
+                "The private session still has a verified backend process running.",
+                details={"session_id": record.session_id, "warnings": warnings},
+            )
+        stopped = replace(record, stopped_at=datetime.now(UTC).isoformat())
+        self.store.save(stopped)
+        return stopped, warnings
 
     def _require_window_management(self, session_id: str) -> SessionRecord:
         record = self._require_running(session_id)
@@ -836,11 +1124,37 @@ class SessionManager:
         return record
 
     def _require_running(self, session_id: str) -> SessionRecord:
+        self._expire_session_if_due(session_id)
+        record = self._require_running_record(session_id)
+        record = self._ensure_lease_worker(session_id)
+        expiration = _parse_lease_expiration(record.expires_at)
+        if (
+            record.stopped_at is not None
+            or not self.backend.is_running(record)
+            or (expiration is not None and expiration <= datetime.now(UTC))
+        ):
+            self._expire_session_if_due(session_id)
+            raise InteractionError(
+                "session_not_running",
+                "The private KWin session is not running or its lease has expired.",
+                details={"session_id": session_id},
+            )
+        return record
+
+    def _require_running_record(self, session_id: str) -> SessionRecord:
         record = self.store.load(session_id)
         if record.stopped_at is not None or not self.backend.is_running(record):
             raise InteractionError(
                 "session_not_running",
                 "The private KWin session is not running.",
+                details={"session_id": session_id},
+            )
+        expiration = _parse_lease_expiration(record.expires_at)
+        if expiration is not None and expiration <= datetime.now(UTC):
+            self._stop_record_locked(record)
+            raise InteractionError(
+                "session_not_running",
+                "The private KWin session lease expired.",
                 details={"session_id": session_id},
             )
         return record
@@ -866,6 +1180,53 @@ def _global_pointer_semantics(result: dict[str, Any]) -> dict[str, Any]:
     }
     result["note"] += " Global pointer input may move the pointer or change the active window."
     return result
+
+
+def _validate_lease_duration(duration_seconds: int) -> None:
+    if (
+        isinstance(duration_seconds, bool)
+        or not isinstance(duration_seconds, int)
+        or (duration_seconds != -1 and duration_seconds < 1)
+    ):
+        raise InteractionError(
+            "invalid_session_lease",
+            "Session lease duration must be a positive number of seconds, or -1 for indefinite.",
+            details={"duration_seconds": duration_seconds},
+        )
+
+
+def _lease_expiration(
+    duration_seconds: int,
+    *,
+    base: datetime | None = None,
+) -> str | None:
+    if duration_seconds == -1:
+        return None
+    try:
+        expiration = (base or datetime.now(UTC)) + timedelta(seconds=duration_seconds)
+    except OverflowError as exc:
+        raise InteractionError(
+            "invalid_session_lease",
+            "Session lease duration is too large to represent.",
+            details={"duration_seconds": duration_seconds},
+        ) from exc
+    return expiration.astimezone(UTC).isoformat()
+
+
+def _parse_lease_expiration(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        expiration = datetime.fromisoformat(value)
+        if expiration.tzinfo is None or expiration.utcoffset() is None:
+            raise ValueError("lease expiration must include a timezone")
+    except (OverflowError, ValueError) as exc:
+        raise InteractionError(
+            "session_state_invalid",
+            "The saved session lease expiration is invalid.",
+            details={"expires_at": value, "reason": str(exc)},
+        ) from exc
+    return expiration.astimezone(UTC)
 
 
 def _validate_request(name: str, width: int, height: int) -> None:

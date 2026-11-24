@@ -15,6 +15,8 @@ be selected explicitly.
 ## What it can do
 
 - Create private virtual desktops and launch applications inside them.
+- Auto-stop private sessions after six hours by default; extend their lease,
+  make one indefinite with `-1`, or stop it explicitly.
 - Observe windows, displays, pointer/focus context, and capture full-desktop
   screenshots; the CLI and MCP can also capture individual windows directly.
 - Find, inspect, activate, minimize/restore, and place windows; send guarded

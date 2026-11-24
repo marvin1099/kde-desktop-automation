@@ -330,6 +330,7 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
         "kde_session_list",
         "kde_session_create",
         "kde_session_stop",
+        "kde_session_extend",
         "kde_session_launch",
         "kde_window_list",
         "kde_window_find",
@@ -520,12 +521,69 @@ def test_mcp_registers_shared_desktop_and_private_lifecycle_tools() -> None:
     create_tool = next(tool for tool in tools if tool.name == "kde_session_create")
     assert create_tool.inputSchema["properties"]["width"]["minimum"] == 320
     assert create_tool.inputSchema["properties"]["width"]["maximum"] == 7680
+    assert create_tool.inputSchema["properties"]["duration_seconds"]["default"] == 21_600
+    assert create_tool.inputSchema["properties"]["duration_seconds"]["anyOf"] == [
+        {"const": -1},
+        {"minimum": 1},
+    ]
+    extend_tool = next(tool for tool in tools if tool.name == "kde_session_extend")
+    assert extend_tool.inputSchema["properties"]["duration_seconds"]["default"] == 21_600
+    assert extend_tool.inputSchema["properties"]["duration_seconds"]["anyOf"] == [
+        {"const": -1},
+        {"minimum": 1},
+    ]
     launch_tool = next(tool for tool in tools if tool.name == "kde_session_launch")
     assert launch_tool.inputSchema["properties"]["argv"]["minItems"] == 1
     assert launch_tool.inputSchema["properties"]["argv"]["maxItems"] == 128
     route_tool = next(tool for tool in tools if tool.name == "kde_audio_route_stream")
     assert route_tool.inputSchema["properties"]["stream_id"]["minimum"] == 0
     assert route_tool.inputSchema["properties"]["process_id"]["anyOf"][0]["exclusiveMinimum"] == 0
+
+
+def test_mcp_session_lifecycle_routes_lease_duration() -> None:
+    calls = []
+
+    class FakeManager:
+        def create_agent_session(
+            self,
+            name,
+            width,
+            height,
+            *,
+            make_default=False,
+            duration_seconds,
+        ):
+            calls.append(("create", duration_seconds))
+            return {"session_id": "agent-123456789abc"}
+
+        def public_record(self, record):
+            return record
+
+        def extend_session(self, session_id, *, duration_seconds):
+            calls.append(("extend", session_id, duration_seconds))
+            return {"session_id": session_id, "expires_at": None}
+
+    server = create_mcp_server(manager_factory=FakeManager)
+
+    async def invoke() -> tuple[CallToolResult, CallToolResult]:
+        created = await server.call_tool(
+            "kde_session_create",
+            {"duration_seconds": -1},
+        )
+        extended = await server.call_tool(
+            "kde_session_extend",
+            {"session_id": "agent-123456789abc", "duration_seconds": 3600},
+        )
+        return cast(CallToolResult, created), cast(CallToolResult, extended)
+
+    created, extended = asyncio.run(invoke())
+
+    assert created.structuredContent["data"]["session_id"] == "agent-123456789abc"
+    assert extended.structuredContent["data"]["expires_at"] is None
+    assert calls == [
+        ("create", -1),
+        ("extend", "agent-123456789abc", 3600),
+    ]
 
 
 def test_mcp_routes_real_desktop_only_when_explicitly_selected() -> None:

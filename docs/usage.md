@@ -18,6 +18,7 @@ working on the physical desktop while this session is inspected or screenshotted
 uv sync
 uv run kde-desktop doctor
 uv run kde-desktop session create --name agent --width 1280 --height 800
+uv run kde-desktop session extend SESSION_ID --duration 3600
 uv run kde-desktop session list
 uv run kde-desktop session displays SESSION_ID
 uv run kde-desktop session screenshot SESSION_ID --output /tmp/agent.png
@@ -53,9 +54,16 @@ capability reports verify the helper and matching authorization declaration;
 KWin's actual authorization is still verified by a capture request. Restart
 private sessions created before installation so they receive the entry.
 
-`session create` prints the generated ID. The isolated session is not a
-security sandbox: it runs as the current Unix user, though with a private home
-and session bus. Do not run untrusted applications in it.
+`session create` prints the generated ID and starts a six-hour lease by default.
+The independent lease monitor stops the private compositor and its tracked
+applications at expiry, even when the CLI or MCP server has exited. Set
+`--duration -1` for an indefinite session; use `session extend SESSION_ID
+--duration SECONDS` to add time to a finite lease, or `--duration -1` to make it
+indefinite. A positive extension on an indefinite lease starts a finite lease
+from now. `session stop SESSION_ID` closes a session immediately.
+
+The isolated session is not a security sandbox: it runs as the current Unix user,
+though with a private home and session bus. Do not run untrusted applications in it.
 
 `kde-desktop doctor` reports host prerequisites without enumerating or injecting into
 the live desktop. To probe live window/input capabilities, explicitly run
@@ -120,7 +128,7 @@ session is missing or stopped, commands fail rather than switching sessions or
 falling back to the live desktop. For concurrent agents, give each agent its
 own environment value or, especially when sharing an MCP server, pass each
 managed session ID explicitly. Session lifecycle commands (`session create`,
-`list`, `show`, `use`, `stop`, and `launch`) remain under `session`.
+`list`, `show`, `use`, `extend`, `stop`, and `launch`) remain under `session`.
 
 `KDE_DESKTOP_SESSION` and `session use` select process-wide/persisted defaults; they
 are not per-agent ownership mechanisms. Concurrent session creation now
@@ -539,6 +547,9 @@ IDs. Input remains best-effort and must be independently verified.
 - Private session lifecycle requires Linux `pidfd` process-control support.
   If unavailable, session creation fails closed rather than falling back to
   race-prone PID signalling.
+- Timed private sessions use a separate lease-monitor process so expiry remains
+  active after the creating CLI or MCP request exits. The six-hour default can
+  be overridden at creation; `-1` explicitly disables automatic expiry.
 - `session stop` removes the private runtime only when it can verify it owns all
   entries and no mountpoints are present. If a portal leaves mounted or busy
   state behind, the CLI warns and preserves it for manual cleanup.

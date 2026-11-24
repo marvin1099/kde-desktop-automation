@@ -5,6 +5,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,8 @@ from kde_desktop_automation.backends.kwin_input import InputReceipt
 from kde_desktop_automation.errors import InteractionError
 from kde_desktop_automation.models import ProcessIdentity, SessionRecord
 from kde_desktop_automation.paths import RuntimePaths
-from kde_desktop_automation.sessions import SessionManager
+from kde_desktop_automation.process import process_matches
+from kde_desktop_automation.sessions import DEFAULT_SESSION_LEASE_SECONDS, SessionManager
 
 
 class FakeBackend:
@@ -205,7 +207,11 @@ def manager(tmp_path) -> SessionManager:
     paths = RuntimePaths.from_environment(
         {"XDG_RUNTIME_DIR": str(runtime), "XDG_STATE_HOME": str(tmp_path / "state")}
     )
-    return SessionManager(paths, backend=FakeBackend())
+    return SessionManager(
+        paths,
+        backend=FakeBackend(),
+        lease_worker_starter=lambda _session_id: None,
+    )
 
 
 def test_session_lifecycle_is_scoped_to_agent_session(manager: SessionManager) -> None:
@@ -214,6 +220,9 @@ def test_session_lifecycle_is_scoped_to_agent_session(manager: SessionManager) -
 
     assert public["kind"] == "agent-session"
     assert public["status"] == "running"
+    assert public["expires_at"] is not None
+    assert public["lease_indefinite"] is False
+    assert public["lease_monitor_active"] is False
     assert public["isolation"]["physical_displays"] == "unaffected"
     assert public["capabilities"]["input.inject"] is True
     assert public["capabilities"]["input.effect_ack"] is False
@@ -228,6 +237,120 @@ def test_session_lifecycle_is_scoped_to_agent_session(manager: SessionManager) -
     assert not warnings
     assert stopped["status"] == "stopped"
     assert manager.list_sessions()[0]["status"] == "stopped"
+
+
+def test_session_lease_defaults_to_six_hours_and_supports_indefinite(
+    manager: SessionManager,
+) -> None:
+    before_creation = datetime.now(UTC)
+    created = manager.create_agent_session("default-lease", 640, 480)
+    after_creation = datetime.now(UTC)
+    expiration = datetime.fromisoformat(created.expires_at or "")
+
+    assert before_creation + timedelta(seconds=DEFAULT_SESSION_LEASE_SECONDS) <= expiration
+    assert expiration <= after_creation + timedelta(seconds=DEFAULT_SESSION_LEASE_SECONDS)
+
+    indefinite = manager.create_agent_session("indefinite-lease", 640, 480, duration_seconds=-1)
+    assert indefinite.expires_at is None
+    assert indefinite.lease_worker is None
+    assert manager.get_session(indefinite.session_id)["lease_indefinite"] is True
+
+
+def test_session_lease_can_be_extended_and_made_indefinite(manager: SessionManager) -> None:
+    created = manager.create_agent_session(
+        "extend-lease",
+        640,
+        480,
+        duration_seconds=60,
+    )
+    original_expiration = datetime.fromisoformat(created.expires_at or "")
+
+    extended = manager.extend_session(created.session_id, duration_seconds=120)
+    extended_expiration = datetime.fromisoformat(extended["expires_at"])
+
+    assert extended_expiration == original_expiration + timedelta(seconds=120)
+    assert extended["lease_indefinite"] is False
+
+    indefinite = manager.extend_session(created.session_id, duration_seconds=-1)
+    assert indefinite["expires_at"] is None
+    assert indefinite["lease_indefinite"] is True
+    assert manager.store.load(created.session_id).lease_worker is None
+
+
+def test_indefinite_session_can_be_given_a_finite_lease(manager: SessionManager) -> None:
+    created = manager.create_agent_session(
+        "finite-again",
+        640,
+        480,
+        duration_seconds=-1,
+    )
+    before_extension = datetime.now(UTC)
+
+    updated = manager.extend_session(created.session_id, duration_seconds=90)
+    expiration = datetime.fromisoformat(updated["expires_at"])
+
+    assert before_extension + timedelta(seconds=90) <= expiration
+    assert updated["lease_indefinite"] is False
+
+
+def test_session_lease_rejects_zero(manager: SessionManager) -> None:
+    with pytest.raises(InteractionError) as error:
+        manager.create_agent_session("zero-lease", 640, 480, duration_seconds=0)
+
+    assert error.value.code == "invalid_session_lease"
+
+
+def test_expired_session_lease_stops_backend_and_cannot_be_extended(
+    manager: SessionManager,
+) -> None:
+    created = manager.create_agent_session("expired-lease", 640, 480, duration_seconds=60)
+    expired = replace(created, expires_at=(datetime.now(UTC) - timedelta(seconds=1)).isoformat())
+    manager.store.save(expired)
+
+    assert manager.get_session(created.session_id)["status"] == "stopped"
+    assert created.session_id not in manager.backend.running
+
+    with pytest.raises(InteractionError) as error:
+        manager.extend_session(created.session_id, duration_seconds=60)
+    assert error.value.code == "session_not_running"
+
+
+def test_lease_worker_expires_session_without_a_manager_request(manager: SessionManager) -> None:
+    created = manager.create_agent_session("worker-expiry", 640, 480, duration_seconds=1)
+    expiration = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+    worker = ProcessIdentity(
+        pid=os.getpid(),
+        start_ticks=1,
+        executable="/fake/lease-worker",
+        marker=created.session_id,
+        command=("lease-worker",),
+    )
+    manager.store.save(replace(created, expires_at=expiration, lease_worker=worker))
+
+    manager.run_session_lease_worker(created.session_id, os.getpid())
+
+    assert created.session_id not in manager.backend.running
+    assert manager.store.load(created.session_id).stopped_at is not None
+
+
+def test_default_lease_monitor_starts_and_stops_with_session(manager: SessionManager) -> None:
+    monitored_manager = SessionManager(manager.paths, backend=FakeBackend())
+    created = monitored_manager.create_agent_session(
+        "monitored-lease",
+        640,
+        480,
+        duration_seconds=3600,
+    )
+
+    assert created.lease_worker is not None
+    assert process_matches(created.lease_worker)
+    assert monitored_manager.get_session(created.session_id)["lease_monitor_active"] is True
+
+    stopped, warnings = monitored_manager.stop(created.session_id)
+
+    assert stopped["status"] == "stopped"
+    assert warnings == []
+    assert not process_matches(created.lease_worker)
 
 
 def test_private_capabilities_report_screenshot_executable_availability(

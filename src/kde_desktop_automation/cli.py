@@ -28,7 +28,7 @@ from kde_desktop_automation.diagnostics import build_doctor_report
 from kde_desktop_automation.errors import InteractionError
 from kde_desktop_automation.operations import DesktopOperations
 from kde_desktop_automation.paths import RuntimePaths
-from kde_desktop_automation.sessions import SessionManager
+from kde_desktop_automation.sessions import DEFAULT_SESSION_LEASE_SECONDS, SessionManager
 
 app = typer.Typer(
     name="kde-desktop",
@@ -188,6 +188,12 @@ def create_session(
         "--default",
         help="Make this private session the default for shared commands without --session.",
     ),
+    duration_seconds: int = typer.Option(
+        DEFAULT_SESSION_LEASE_SECONDS,
+        "--duration",
+        min=-1,
+        help="Auto-stop after this many seconds; use -1 for indefinite (default: 21600).",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
 ) -> None:
     """Start a private KWin virtual output, separate from the user's compositor."""
@@ -199,6 +205,7 @@ def create_session(
             width=width,
             height=height,
             make_default=make_default,
+            duration_seconds=duration_seconds,
         )
         return manager.public_record(session), []
 
@@ -301,6 +308,30 @@ def stop_session(
 ) -> None:
     """Stop launched applications and the recorded private KWin/D-Bus processes."""
     _run(lambda: _manager().stop(session_id), json_output=json_output)
+
+
+@session_app.command("extend")
+def extend_session(
+    session_id: str = typer.Argument(..., help="Running managed session ID."),
+    duration_seconds: int = typer.Option(
+        DEFAULT_SESSION_LEASE_SECONDS,
+        "--duration",
+        min=-1,
+        help=(
+            "Add this many seconds to a finite lease; from now for an indefinite lease. "
+            "Use -1 to make the lease indefinite."
+        ),
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit a versioned JSON envelope."),
+) -> None:
+    """Extend a session lease or make it indefinite; use session stop to close it now."""
+    _run(
+        lambda: (
+            _manager().extend_session(session_id, duration_seconds=duration_seconds),
+            [],
+        ),
+        json_output=json_output,
+    )
 
 
 @session_app.command("use")

@@ -109,6 +109,7 @@ MCP_TRANSPORT_ONLY_TOOLS = frozenset(
         "kde_session_show",
         "kde_session_use",
         "kde_session_stop",
+        "kde_session_extend",
         "kde_session_launch",
     }
 )

@@ -55,6 +55,8 @@ class SessionRecord:
     application_processes: tuple[ProcessIdentity, ...] = ()
     fake_input_version: int | None = None
     window_management_version: int | None = None
+    expires_at: str | None = None
+    lease_worker: ProcessIdentity | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -74,6 +76,8 @@ class SessionRecord:
             "application_processes": [process.to_dict() for process in self.application_processes],
             "fake_input_version": self.fake_input_version,
             "window_management_version": self.window_management_version,
+            "expires_at": self.expires_at,
+            "lease_worker": None if self.lease_worker is None else self.lease_worker.to_dict(),
         }
 
     @classmethod
@@ -106,6 +110,12 @@ class SessionRecord:
                 if value.get("window_management_version") is None
                 else int(value["window_management_version"])
             ),
+            expires_at=None if value.get("expires_at") is None else str(value["expires_at"]),
+            lease_worker=(
+                None
+                if value.get("lease_worker") is None
+                else ProcessIdentity.from_dict(value["lease_worker"])
+            ),
         )
 
     def public_dict(self, *, status: str) -> dict[str, Any]:
@@ -132,6 +142,8 @@ class SessionRecord:
             "backend": self.backend,
             "status": status,
             "created_at": self.created_at,
+            "expires_at": self.expires_at,
+            "lease_indefinite": self.expires_at is None,
             "output": {"width": self.width, "height": self.height},
             "isolation": {
                 "compositor": "separate",
