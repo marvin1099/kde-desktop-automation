@@ -236,7 +236,18 @@ def test_session_lifecycle_is_scoped_to_agent_session(manager: SessionManager) -
     stopped, warnings = manager.stop(created.session_id)
     assert not warnings
     assert stopped["status"] == "stopped"
+    assert manager.default_session_id() is None
     assert manager.list_sessions()[0]["status"] == "stopped"
+
+
+def test_stopping_default_allows_next_session_to_become_default(manager: SessionManager) -> None:
+    first = manager.create_agent_session("first-default", 640, 480)
+    manager.stop(first.session_id)
+
+    second = manager.create_agent_session("second-default", 640, 480)
+
+    assert manager.default_session_id() == second.session_id
+    assert manager.get_session(second.session_id)["is_default"] is True
 
 
 def test_session_lease_defaults_to_six_hours_and_supports_indefinite(

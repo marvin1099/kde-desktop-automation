@@ -333,6 +333,24 @@ class SessionStore:
             self._write_default_session(session_id)
             return True
 
+    def clear_default_session_if(self, session_id: str) -> bool:
+        """Clear the private default only when it still names the stopped session."""
+        validate_session_id(session_id)
+        with self._file_lock(self.root / ".default-session.lock"):
+            if self.default_session_id() != session_id:
+                return False
+            try:
+                self.default_path.unlink()
+            except FileNotFoundError:
+                return False
+            except OSError as exc:
+                raise InteractionError(
+                    "default_session_write_failed",
+                    "Could not clear the stopped private session from the default setting.",
+                    details={"path": str(self.default_path), "reason": str(exc)},
+                ) from exc
+            return True
+
     def _write_default_session(self, session_id: str) -> None:
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=".default-session-",
@@ -921,6 +939,7 @@ class SessionManager:
                 stopped, warnings = record, []
         if record.lease_worker is not None:
             warnings.extend(self._stop_lease_worker(record.lease_worker))
+        self.store.clear_default_session_if(session_id)
         return self.public_record(stopped), warnings
 
     def public_record(self, record: SessionRecord) -> dict[str, Any]:
@@ -1104,6 +1123,7 @@ class SessionManager:
             )
         stopped = replace(record, stopped_at=datetime.now(UTC).isoformat())
         self.store.save(stopped)
+        self.store.clear_default_session_if(record.session_id)
         return stopped, warnings
 
     def _require_window_management(self, session_id: str) -> SessionRecord:
